@@ -37,25 +37,30 @@ def carregar_texto_lei_online():
     # URL Oficial da Lei Complementar 214
     url = "https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp214.htm"
     
+    # --- A CORREÇÃO ESTÁ AQUI ---
+    # Criamos um "User-Agent" para fingir ser um navegador real
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    
     try:
-        response = requests.get(url, timeout=10)
-        response.raise_for_status() # Garante que o site respondeu
+        # Adicionamos headers e aumentamos o tempo limite para 30 segundos
+        response = requests.get(url, headers=headers, timeout=30)
+        response.raise_for_status() 
         
-        # Limpeza do HTML (BeautifulSoup)
+        # Limpeza do HTML
         soup = BeautifulSoup(response.content, 'html.parser')
         
-        # Remove scripts e estilos CSS para pegar só o texto puro
         for script in soup(["script", "style"]):
             script.extract()
             
         texto_limpo = soup.get_text(separator=' ')
-        
-        # Remove excesso de espaços
         texto_limpo = re.sub(r'\s+', ' ', texto_limpo).lower()
         
         return texto_limpo
     except Exception as e:
         st.error(f"Erro ao acessar site do Planalto: {e}")
+        st.warning("DICA: Se o erro persistir, o site do governo pode estar instável. Considere usar a versão com PDF.")
         return None
 
 # --- 3. LÓGICA DE INTELIGÊNCIA ---
@@ -74,7 +79,7 @@ def verificar_na_lei(produto, texto_lei):
     
     termo_busca = limpar_descricao(produto)
     
-    if len(termo_busca) < 4: # Ignora palavras muito curtas
+    if len(termo_busca) < 4: 
         return "-"
 
     if termo_busca in texto_lei:
@@ -132,17 +137,16 @@ def classificar_item(ncm, cfop, df_regras):
 with st.sidebar:
     st.header("📂 Arquivos")
     uploaded_files = st.file_uploader("XMLs de Venda", type=['xml'], accept_multiple_files=True)
-    st.success("🟢 Conectado à Base Legal do Planalto")
+    st.success("🟢 Tentando conexão com Planalto...")
 
 df_regras = carregar_regras()
-texto_lei = carregar_texto_lei_online() # Acessa a internet aqui
+texto_lei = carregar_texto_lei_online() 
 
 if uploaded_files:
     if df_regras.empty:
         st.error("🚨 JSON de regras não encontrado.")
     else:
         with st.spinner('Lendo XMLs e Baixando Lei do Planalto...'):
-            # Processamento dos XMLs
             lista_produtos = []
             ns = {'ns': 'http://www.portalfiscal.inf.br/nfe'}
             
@@ -168,7 +172,6 @@ if uploaded_files:
             if not df_base.empty:
                 df_analise = df_base.drop_duplicates(subset=['NCM', 'Produto', 'CFOP']).copy()
                 
-                # Classificação
                 resultados = df_analise.apply(
                     lambda row: classificar_item(row['NCM'], row['CFOP'], df_regras), axis=1, result_type='expand'
                 )
@@ -177,21 +180,20 @@ if uploaded_files:
                 df_analise['Status'] = resultados[2]
                 df_analise['Novo CST'] = resultados[3]
                 
-                # Busca na Lei Online
                 if texto_lei:
                     df_analise['Citado na Lei 214?'] = df_analise['Produto'].apply(lambda x: verificar_na_lei(x, texto_lei))
+                else:
+                    df_analise['Citado na Lei 214?'] = "Erro Conexão"
                 
-                # Exibição
                 col1, col2 = st.columns(2)
                 col1.metric("Produtos Processados", len(df_analise))
                 
-                # Conta quantos foram achados na lei
-                achados_lei = len(df_analise[df_analise['Citado na Lei 214?'] != "-"])
+                achados_lei = len(df_analise[df_analise['Citado na Lei 214?'].str.len() > 5])
                 col2.metric("Produtos Citados na Lei", achados_lei, delta="Atenção" if achados_lei > 0 else None)
                 
                 if achados_lei > 0:
                     st.info("🔎 Encontramos termos exatos na Lei para os produtos abaixo:")
-                    st.dataframe(df_analise[df_analise['Citado na Lei 214?'] != "-"][['Produto', 'Citado na Lei 214?']], use_container_width=True)
+                    st.dataframe(df_analise[df_analise['Citado na Lei 214?'].str.len() > 5][['Produto', 'Citado na Lei 214?']], use_container_width=True)
                 
                 st.write("### Análise Completa")
                 st.dataframe(df_analise, use_container_width=True)
