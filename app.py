@@ -14,7 +14,7 @@ st.set_page_config(
 st.title("⚖️ Auditoria & Classificação - Reforma Tributária")
 st.markdown("""
 **Instruções:** Arraste seus arquivos XML de venda para identificar a tributação correta 
-(IBS/CBS) com base no NCM e CFOP.
+(cClassTrib e CST) com base no NCM, CFOP e nas regras da Reforma Tributária.
 """)
 st.divider()
 
@@ -26,7 +26,7 @@ def carregar_regras():
         with open('classificacao_tributaria.json', 'r', encoding='utf-8') as f:
             dados = json.load(f)
             df = pd.DataFrame(dados)
-            # Cria coluna de busca em minúsculo para facilitar
+            # Cria coluna de busca em minúsculo para facilitar a comparação
             df['Busca'] = df['Descrição do Código da Classificação Tributária'].str.lower()
             return df
     except FileNotFoundError:
@@ -35,12 +35,15 @@ def carregar_regras():
 # --- 3. LÓGICA DE INTELIGÊNCIA TRIBUTÁRIA ---
 def classificar_item(ncm, cfop, df_regras):
     ncm = str(ncm)
-    cfop = str(cfop).replace('.', '')
+    cfop = str(cfop).replace('.', '') # Remove pontos (5.102 vira 5102)
     
     termo_busca = ""
     status = "PADRAO" 
 
-    # Regras de Negócio (Define a palavra-chave)
+    # --- REGRAS DE NEGÓCIO (Analista Fiscal) ---
+    # Define qual termo vamos buscar no JSON baseado no NCM/CFOP
+    
+    # 1º: Operações Especiais (Pelo CFOP)
     if cfop.startswith('7'): 
         termo_busca = "exportação"
         status = "IMUNE"
@@ -48,13 +51,14 @@ def classificar_item(ncm, cfop, df_regras):
         termo_busca = "zona franca"
         status = "BENEFICIO"
     elif cfop in ['5901', '5902', '5949', '6901']:
-        # Se for remessa, não tem CST de tributação regular, retornamos traço
-        return '-', 'Remessa/Devolução', 'OUTROS', '-'
+        # Se for remessa, não tem CST de tributação regular
+        return '-', 'Remessa/Devolução (Não Incidência)', 'OUTROS', '999'
         
+    # 2º: Tipo de Produto (Pelo NCM)
     elif ncm.startswith('30'):
         termo_busca = "medicamentos"
         status = "REDUZIDA"
-    elif ncm.startswith('1006') or ncm.startswith('02') or ncm.startswith('1101'):
+    elif ncm.startswith('1006') or ncm.startswith('02') or ncm.startswith('1101'): # Arroz, Carne, Trigo
         termo_busca = "cesta básica"
         status = "ZERO"
     elif ncm.startswith('3304') or ncm.startswith('3401'):
@@ -64,26 +68,28 @@ def classificar_item(ncm, cfop, df_regras):
         termo_busca = "combustíveis"
         status = "MONOFASICA"
     else:
-        # Tenta pegar o CST padrão do JSON (Geralmente 000 ou 01)
+        # Se não cair em nenhuma regra acima, busca a regra PADRÃO no JSON
         termo_busca = "tributação integral"
         status = "PADRAO"
 
     # --- BUSCA NO JSON ---
     if not df_regras.empty:
-        # Procura a palavra chave
+        # Tenta achar a palavra chave dentro do JSON
         resultado = df_regras[df_regras['Busca'].str.contains(termo_busca, na=False)]
         
         if not resultado.empty:
-            # PEGA OS DADOS DO JSON (Incluindo o CST)
+            # Pega os dados principais
             codigo = resultado.iloc[0]['Código da Classificação Tributária']
             desc = resultado.iloc[0]['Descrição do Código da Classificação Tributária']
             
-            # Tenta pegar o CST se a coluna existir no JSON
-            cst = resultado.iloc[0].get('Código da Situação Tributária', 'N/A')
+            # --- NOVIDADE: PEGA O CST DO JSON ---
+            # O .get previne erro se a coluna não existir
+            cst = resultado.iloc[0].get('Código da Situação Tributária', '?')
             
             return codigo, desc, status, cst
     
-    return 'VERIFICAR', f'Regra não achada: {termo_busca}', 'ATENCAO', '?'
+    # Se definiu um termo de busca mas não achou no JSON
+    return 'VERIFICAR', f'Regra definida mas não encontrada: {termo_busca}', 'ATENCAO', '?'
 
 # --- 4. PROCESSAMENTO DOS XMLS ---
 def processar_xmls(uploaded_files):
@@ -129,28 +135,32 @@ def processar_xmls(uploaded_files):
 with st.sidebar:
     st.header("📂 Importação")
     uploaded_files = st.file_uploader("Selecione arquivos XML", type=['xml'], accept_multiple_files=True)
+    st.info("O processamento ocorre localmente ou na nuvem segura do Streamlit.")
 
 # Carrega a inteligência
 df_regras = carregar_regras()
 
 if uploaded_files:
     if df_regras.empty:
-        st.error("🚨 ERRO: Não encontrei o arquivo 'classificacao_tributaria.json'. Verifique a pasta.")
+        st.error("🚨 ERRO: Não encontrei o arquivo 'classificacao_tributaria.json'. Verifique se ele está na pasta.")
     else:
-        with st.spinner('Processando XMLs...'):
+        with st.spinner('Lendo XMLs e Cruzando com o JSON...'):
             df_base = processar_xmls(uploaded_files)
             
             if not df_base.empty:
                 # Criamos um dataframe resumido para análise (agrupado por produto único)
                 df_analise = df_base.drop_duplicates(subset=['NCM', 'Produto', 'CFOP']).copy()
                 
-                # APLICA A CLASSIFICAÇÃO
+                # APLICA A CLASSIFICAÇÃO (RETORNA 4 VALORES AGORA)
                 resultados = df_analise.apply(
                     lambda row: classificar_item(row['NCM'], row['CFOP'], df_regras), axis=1, result_type='expand'
                 )
-                df_analise['cClassTrib Sugerido'] = resultados[0]
+                
+                # Cria as colunas novas
+                df_analise['Novo cClassTrib'] = resultados[0]
                 df_analise['Descrição Legal'] = resultados[1]
                 df_analise['Status'] = resultados[2]
+                df_analise['Novo CST'] = resultados[3] # <--- AQUI ESTÁ O SEU CST DO JSON
                 
                 # --- DASHBOARD DE RESUMO ---
                 col1, col2, col3, col4 = st.columns(4)
@@ -168,7 +178,13 @@ if uploaded_files:
                 
                 with tab1:
                     filtro = st.multiselect("Filtrar por Status:", df_analise['Status'].unique(), default=df_analise['Status'].unique())
-                    st.dataframe(df_analise[df_analise['Status'].isin(filtro)], use_container_width=True)
+                    
+                    # Reorganizando as colunas para o CST aparecer junto com o cClassTrib
+                    colunas_ordem = ['NCM', 'Produto', 'CFOP', 'Novo cClassTrib', 'Novo CST', 'Descrição Legal', 'Status', 'Valor']
+                    # Garante que só pegamos colunas que existem (caso o XML não tenha alguma)
+                    cols_finais = [c for c in colunas_ordem if c in df_analise.columns]
+                    
+                    st.dataframe(df_analise[df_analise['Status'].isin(filtro)][cols_finais], use_container_width=True)
                 
                 with tab2:
                     st.bar_chart(df_analise['Status'].value_counts())
@@ -178,12 +194,12 @@ if uploaded_files:
                 st.download_button(
                     label="📥 Baixar Relatório em Excel (CSV)",
                     data=csv,
-                    file_name="Analise_Tributaria.csv",
+                    file_name="Analise_Tributaria_Completa.csv",
                     mime="text/csv"
                 )
                 
             else:
-                st.warning("Nenhum dado encontrado nos XMLs.")
+                st.warning("Nenhum dado de produto encontrado nos XMLs.")
 
 else:
     st.info("Aguardando arquivos XML...")
