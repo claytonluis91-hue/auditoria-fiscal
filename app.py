@@ -2,22 +2,52 @@ import streamlit as st
 import pandas as pd
 import json
 import xml.etree.ElementTree as ET
-import requests
-from bs4 import BeautifulSoup
+from pypdf import PdfReader
 import re
 
 # --- 1. CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
-    page_title="Auditoria Fiscal - Reforma Tributária (Raio-X)",
+    page_title="Auditoria Fiscal - Reforma Tributária (Anexos)",
     page_icon="⚖️",
     layout="wide"
 )
 
-st.title("⚖️ Auditoria Fiscal & Anexos da Lei")
-st.markdown("Auditoria cruzando XMLs com regras de negócio e **varredura de NCMs citados na LCP 214**.")
+st.title("⚖️ Auditoria Fiscal: Leitor de Anexos (LCP 214)")
+st.markdown("O sistema identifica em **qual Anexo da Lei** o NCM está e aplica o CST/cClassTrib correspondente.")
 st.divider()
 
-# --- 2. CARREGAMENTO DE DADOS ---
+# --- 2. CONFIGURAÇÃO DE INTELIGÊNCIA (O CÉREBRO) ---
+# Aqui definimos o que cada Anexo significa em termos de tributação
+# ATENÇÃO: Ajuste os códigos 'cClassTrib' e 'CST' conforme o seu JSON ou entendimento da lei
+CONFIG_ANEXOS = {
+    "ANEXO I": {
+        "Descricao": "Cesta Básica Nacional (Alíquota Zero)",
+        "cClassTrib": "200003", 
+        "CST": "40", # Isenta/Não Tributada
+        "Status": "ZERO (Anexo I)"
+    },
+    "ANEXO II": {
+        "Descricao": "Medicamentos (Redução 60%)",
+        "cClassTrib": "200009", 
+        "CST": "20", # Com redução
+        "Status": "REDUZIDA 60% (Anexo II)"
+    },
+    "ANEXO III": {
+        "Descricao": "Dispositivos Médicos (Redução 60%)",
+        "cClassTrib": "200005", 
+        "CST": "20",
+        "Status": "REDUZIDA 60% (Anexo III)"
+    },
+    "ANEXO IV": {
+        "Descricao": "Produtos de Higiene (Redução 60%)",
+        "cClassTrib": "200035", 
+        "CST": "20",
+        "Status": "REDUZIDA 60% (Anexo IV)"
+    },
+    # Adicione outros anexos se necessário (V, VI, etc)
+}
+
+# --- 3. CARREGAMENTO DE DADOS ---
 
 @st.cache_data
 def carregar_regras():
@@ -31,136 +61,152 @@ def carregar_regras():
         return pd.DataFrame()
 
 @st.cache_data
-def carregar_ncm_da_lei_online():
+def mapear_ncms_por_anexo_pdf():
     """
-    Esta função vai no site do Planalto, baixa o texto e extrai TODOS os NCMs citados lá.
-    Retorna uma lista de NCMs que possuem benefícios ou regras específicas.
+    Lê o PDF e cria um dicionário: {'100630': 'ANEXO I', '3004': 'ANEXO II'}
     """
-    url = "https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp214.htm"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-    
-    lista_ncms_lei = set() # Usamos set para não repetir
+    nome_ficheiro = "Lcp 214.pdf"
+    mapa_ncm_anexo = {}
     
     try:
-        response = requests.get(url, headers=headers, timeout=15)
-        if response.status_code == 200:
-            soup = BeautifulSoup(response.content, 'html.parser')
-            for script in soup(["script", "style"]):
-                script.extract()
-            texto = soup.get_text(separator=' ')
-            
-            # --- O PULO DO GATO: REGEX ---
-            # Procura padrões de NCM: 4 a 8 dígitos, as vezes com ponto
-            # Ex: 1006.30, 3004, 96190000
-            # O padrão abaixo busca números de 4 a 8 digitos próximos a palavra NCM ou soltos em tabelas
-            
-            # Limpa pontos para padronizar
-            texto_limpo = texto.replace('.', '') 
-            
-            # Busca sequências de 8 números (NCM completo)
-            ncms_encontrados = re.findall(r'\b\d{8}\b', texto_limpo)
-            lista_ncms_lei.update(ncms_encontrados)
-            
-            # Busca sequências de 4 números (Capítulos/Posições citadas, ex: 3004)
-            capitulos_encontrados = re.findall(r'\b\d{4}\b', texto_limpo)
-            lista_ncms_lei.update(capitulos_encontrados)
-            
-            return lista_ncms_lei
-        else:
-            return set()
-    except:
-        return set()
-
-# --- 3. LÓGICA DE INTELIGÊNCIA ---
-
-def classificar_item_avancado(ncm, cfop, produto, df_regras, ncms_da_lei):
-    ncm = str(ncm).replace('.', '')
-    cfop = str(cfop).replace('.', '')
-    
-    termo_busca = ""
-    status = "PADRAO" 
-    origem_regra = "Regra Geral"
-
-    # --- FASE 1: CONFIRMAÇÃO NA LEI (PRIORIDADE MÁXIMA) ---
-    # Se o NCM exato (8 dígitos) ou o Capítulo (4 primeiros) estiver na Lei, é exceção!
-    
-    citado_na_lei = False
-    if ncm in ncms_da_lei:
-        citado_na_lei = True
-    elif ncm[:4] in ncms_da_lei: # Verifica os 4 primeiros dígitos (Ex: 3004)
-        citado_na_lei = True
+        reader = PdfReader(nome_ficheiro)
+        texto_completo = ""
+        for page in reader.pages:
+            texto_completo += page.extract_text() + "\n"
         
-    # --- FASE 2: REGRAS DE NEGÓCIO ---
-    
-    # 1. Operações (CFOP)
-    if cfop.startswith('7'): 
-        termo_busca = "exportação"
-        status = "IMUNE"
-    elif cfop in ['6109', '6110', '5109', '5110']:
-        termo_busca = "zona franca"
-        status = "BENEFICIO"
-    elif cfop in ['5901', '5902', '5949', '6901']:
-        return '-', 'Remessa/Devolução', 'OUTROS', '999', 'Não'
-    
-    # 2. Produtos (NCM) - Agora turbinado com a checagem da Lei
-    else:
-        # Se foi citado na lei, força uma busca por exceção
-        if citado_na_lei:
-            origem_regra = "Encontrado na LCP 214"
-            # Tenta inferir o tipo pela família do NCM para buscar no JSON
-            if ncm.startswith('30'): termo_busca = "medicamentos"
-            elif ncm.startswith('9619'): termo_busca = "higiene"
-            elif ncm.startswith('10') or ncm.startswith('02'): termo_busca = "cesta básica"
-            elif ncm.startswith('87'): termo_busca = "veículos"
-            else: 
-                # Se achou na lei mas não sabemos o que é, marca para atenção
-                return 'VERIFICAR NA LEI', 'NCM citado no texto legal - Verificar Anexo', 'ATENCAO LEI', '?', 'Sim'
-                
-        # Se NÃO foi citado na lei explicitamente, segue regra padrão
-        else:
-            if ncm.startswith('30'): termo_busca = "medicamentos"; status="REDUZIDA"
-            elif ncm.startswith('1006'): termo_busca = "cesta básica"; status="ZERO"
+        # Limpeza básica
+        texto_limpo = re.sub(r'\n+', ' ', texto_completo)
+        
+        # Estratégia: Dividir o texto pelos cabeçalhos dos Anexos
+        # Vamos procurar onde começa cada anexo
+        # Atenção: A ordem da lista importa (do último para o primeiro ajuda no fatiamento, ou split)
+        
+        anexos_encontrados = []
+        for anexo in CONFIG_ANEXOS.keys():
+            # Procura "ANEXO I", "ANEXO II" no texto (case insensitive)
+            posicao = texto_limpo.upper().find(anexo)
+            if posicao != -1:
+                anexos_encontrados.append((posicao, anexo))
+        
+        # Ordena pelo local onde aparece no texto
+        anexos_encontrados.sort()
+        
+        # Agora varre os blocos de texto
+        for i in range(len(anexos_encontrados)):
+            nome_anexo = anexos_encontrados[i][1]
+            inicio = anexos_encontrados[i][0]
+            
+            # O fim é o início do próximo anexo, ou o fim do arquivo
+            if i + 1 < len(anexos_encontrados):
+                fim = anexos_encontrados[i+1][0]
             else:
-                termo_busca = "tributação integral"
-                status = "PADRAO"
+                fim = len(texto_limpo)
+            
+            # Extrai o texto só daquele anexo
+            texto_do_anexo = texto_limpo[inicio:fim]
+            
+            # Extrai NCMs (8 dígitos) e Capítulos (4 dígitos) deste bloco
+            texto_sem_pontos = texto_do_anexo.replace('.', '')
+            ncms = re.findall(r'\b\d{8}\b', texto_sem_pontos)
+            capitulos = re.findall(r'\b\d{4}\b', texto_sem_pontos)
+            
+            # Grava no dicionário mestre
+            for n in ncms:
+                mapa_ncm_anexo[n] = nome_anexo
+            for c in capitulos:
+                if c not in mapa_ncm_anexo: # Prioriza NCM completo se já existir
+                    mapa_ncm_anexo[c] = nome_anexo
+                    
+        return mapa_ncm_anexo
+        
+    except FileNotFoundError:
+        st.warning(f"⚠️ Ficheiro '{nome_ficheiro}' não encontrado.")
+        return {}
+    except Exception as e:
+        st.error(f"Erro ao ler PDF: {e}")
+        return {}
 
-    # --- FASE 3: BUSCA NO JSON ---
-    if termo_busca:
-        if not df_regras.empty:
-            # Busca parcial
-            resultado = df_regras[df_regras['Busca'].str.contains(termo_busca, na=False)]
-            if not resultado.empty:
-                codigo = resultado.iloc[0]['Código da Classificação Tributária']
-                desc = resultado.iloc[0]['Descrição do Código da Classificação Tributária']
-                cst = resultado.iloc[0].get('Código da Situação Tributária', '?')
-                
-                # Se veio da lei, o status muda
-                if citado_na_lei and status == "PADRAO": status = "REDUZIDA (LEI)"
-                
-                return codigo, desc, status, cst, "Sim" if citado_na_lei else "Não"
+# --- 4. LÓGICA DE CLASSIFICAÇÃO ---
+
+def classificar_item_master(ncm, cfop, produto, df_regras, mapa_anexos):
+    ncm_limpo = str(ncm).replace('.', '')
+    cfop_limpo = str(cfop).replace('.', '')
     
-    return '000001', 'Padrão - Tributação Integral', 'PADRAO', '01', 'Não'
+    # Valores Padrão
+    cClassTrib = '000001'
+    desc_legal = 'Padrão - Tributação Integral'
+    cst = '01'
+    status = 'PADRAO'
+    origem = 'Regra Geral'
+    
+    # --- PASSO 1: VERIFICA SE ESTÁ EM ALGUM ANEXO DA LEI ---
+    anexo_encontrado = None
+    
+    # Tenta NCM completo (8 dígitos)
+    if ncm_limpo in mapa_anexos:
+        anexo_encontrado = mapa_anexos[ncm_limpo]
+    # Tenta Capítulo (4 dígitos)
+    elif ncm_limpo[:4] in mapa_anexos:
+        anexo_encontrado = mapa_anexos[ncm_limpo[:4]]
+    # Tenta Posição (2 dígitos - mais arriscado, mas possível para cap 30)
+    elif ncm_limpo[:2] in mapa_anexos: # Ex: Capítulo 30 inteiro no anexo
+        anexo_encontrado = mapa_anexos[ncm_limpo[:2]]
 
-# --- 4. INTERFACE ---
+    # --- PASSO 2: APLICA A REGRA DO ANEXO OU DO CFOP ---
+    
+    # Prioridade para Imunidade/Exportação (CFOP ganha de NCM)
+    if cfop_limpo.startswith('7'):
+        return '410004', 'Exportação', 'IMUNE', '50', 'Não' # CST 50 suspensão/saída
+        
+    elif anexo_encontrado:
+        # BINGO! Achou na lei
+        regra = CONFIG_ANEXOS[anexo_encontrado]
+        cClassTrib = regra['cClassTrib']
+        cst = regra['CST']
+        status = regra['Status']
+        desc_legal = f"{regra['Descricao']} (Encontrado via {anexo_encontrado})"
+        origem = anexo_encontrado
+        
+    else:
+        # Se não achou na lei, tenta a sorte no JSON por palavras-chave (Fallback)
+        termo_busca = ""
+        if ncm_limpo.startswith('30'): termo_busca = "medicamentos"
+        elif ncm_limpo.startswith('1006'): termo_busca = "cesta básica"
+        else: termo_busca = "tributação integral"
+        
+        if not df_regras.empty:
+            res = df_regras[df_regras['Busca'].str.contains(termo_busca, na=False)]
+            if not res.empty:
+                cClassTrib = res.iloc[0]['Código da Classificação Tributária']
+                desc_legal = res.iloc[0]['Descrição do Código da Classificação Tributária']
+                cst = res.iloc[0].get('Código da Situação Tributária', '01')
+                status = "SUGESTAO JSON"
+
+    return cClassTrib, desc_legal, status, cst, origem
+
+# --- 5. INTERFACE ---
 df_regras = carregar_regras()
 
 with st.sidebar:
-    st.header("📂 Arquivos")
+    st.header("📂 Importação")
     uploaded_files = st.file_uploader("XMLs", type=['xml'], accept_multiple_files=True)
     
-    with st.spinner("Baixando NCMs da Lei..."):
-        lista_ncms_lei = carregar_ncm_da_lei_online()
+    st.divider()
+    with st.spinner("Mapeando Lei..."):
+        # Executa o scanner do PDF
+        mapa_anexos = mapear_ncms_por_anexo_pdf()
     
-    if lista_ncms_lei:
-        st.success(f"🟢 LCP 214 Mapeada: {len(lista_ncms_lei)} NCMs identificados no texto.")
+    if mapa_anexos:
+        st.success(f"📘 Lei Mapeada! {len(mapa_anexos)} NCMs distribuídos nos Anexos.")
+        # Debug: Mostra alguns exemplos
+        with st.expander("Ver Mapeamento"):
+            st.write(list(mapa_anexos.items())[:10])
     else:
-        st.warning("🔴 Falha ao ler NCMs do site.")
+        st.warning("O PDF da lei não foi processado corretamente ou não tem NCMs explícitos.")
 
 if uploaded_files:
     if df_regras.empty:
-        st.error("Falta JSON.")
+        st.error("JSON de regras ausente.")
     else:
         lista_produtos = []
         ns = {'ns': 'http://www.portalfiscal.inf.br/nfe'}
@@ -184,23 +230,32 @@ if uploaded_files:
         if not df_base.empty:
             df_analise = df_base.drop_duplicates(subset=['NCM', 'Produto', 'CFOP']).copy()
             
-            # APLICA A NOVA CLASSIFICAÇÃO
+            # APLICA CLASSIFICAÇÃO COM O MAPA DE ANEXOS
             resultados = df_analise.apply(
-                lambda row: classificar_item_avancado(row['NCM'], row['CFOP'], row['Produto'], df_regras, lista_ncms_lei), 
+                lambda row: classificar_item_master(row['NCM'], row['CFOP'], row['Produto'], df_regras, mapa_anexos), 
                 axis=1, result_type='expand'
             )
             
-            df_analise['Novo cClassTrib'] = resultados[0]
+            df_analise['cClassTrib'] = resultados[0]
             df_analise['Descrição'] = resultados[1]
             df_analise['Status'] = resultados[2]
-            df_analise['Novo CST'] = resultados[3]
-            df_analise['Consta na Lei?'] = resultados[4]
+            df_analise['CST'] = resultados[3]
+            df_analise['Origem Legal'] = resultados[4]
             
             col1, col2 = st.columns(2)
-            col1.metric("Itens Analisados", len(df_analise))
-            col2.metric("NCMs Citados na Lei", len(df_analise[df_analise['Consta na Lei?']=='Sim']), delta="Benefício Provável")
+            col1.metric("Produtos", len(df_analise))
+            lei_count = len(df_analise[df_analise['Origem Legal'].str.contains("ANEXO")])
+            col2.metric("Enquadrados nos Anexos", lei_count, delta="Alta Precisão")
             
+            st.write("### Resultado da Auditoria Cruzada")
+            
+            # Filtro rápido
+            if lei_count > 0:
+                st.info("💡 Produtos abaixo foram encontrados diretamente nas tabelas de Anexos da Lei:")
+                st.dataframe(df_analise[df_analise['Origem Legal'].str.contains("ANEXO")], use_container_width=True)
+                st.divider()
+
             st.dataframe(df_analise, use_container_width=True)
             
             csv = df_analise.to_csv(index=False, sep=';', decimal=',').encode('utf-8-sig')
-            st.download_button("Baixar Relatório", csv, "Auditoria_Anexos.csv", "text/csv")
+            st.download_button("Baixar Auditoria.csv", csv, "Auditoria_Anexos.csv", "text/csv")
