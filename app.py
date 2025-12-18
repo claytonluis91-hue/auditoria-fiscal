@@ -1,0 +1,189 @@
+import streamlit as st
+import pandas as pd
+import json
+import xml.etree.ElementTree as ET
+
+# --- 1. CONFIGURAÇÃO DA PÁGINA ---
+st.set_page_config(
+    page_title="Auditoria Fiscal - Reforma Tributária",
+    page_icon="⚖️",
+    layout="wide"
+)
+
+# Título e Cabeçalho
+st.title("⚖️ Auditoria & Classificação - Reforma Tributária")
+st.markdown("""
+**Instruções:** Arraste seus arquivos XML de venda para identificar a tributação correta 
+(IBS/CBS) com base no NCM e CFOP.
+""")
+st.divider()
+
+# --- 2. CARREGAR REGRAS (JSON) ---
+@st.cache_data
+def carregar_regras():
+    try:
+        # Busca o arquivo JSON na mesma pasta
+        with open('classificacao_tributaria.json', 'r', encoding='utf-8') as f:
+            dados = json.load(f)
+            df = pd.DataFrame(dados)
+            # Cria coluna de busca em minúsculo para facilitar
+            df['Busca'] = df['Descrição do Código da Classificação Tributária'].str.lower()
+            return df
+    except FileNotFoundError:
+        return pd.DataFrame()
+
+# --- 3. LÓGICA DE INTELIGÊNCIA TRIBUTÁRIA ---
+def classificar_item(ncm, cfop, df_regras):
+    ncm = str(ncm)
+    cfop = str(cfop).replace('.', '')
+    
+    termo_busca = ""
+    status = "PADRAO" 
+
+    # Regras de Negócio (Define a palavra-chave)
+    if cfop.startswith('7'): 
+        termo_busca = "exportação"
+        status = "IMUNE"
+    elif cfop in ['6109', '6110', '5109', '5110']:
+        termo_busca = "zona franca"
+        status = "BENEFICIO"
+    elif cfop in ['5901', '5902', '5949', '6901']:
+        # Se for remessa, não tem CST de tributação regular, retornamos traço
+        return '-', 'Remessa/Devolução', 'OUTROS', '-'
+        
+    elif ncm.startswith('30'):
+        termo_busca = "medicamentos"
+        status = "REDUZIDA"
+    elif ncm.startswith('1006') or ncm.startswith('02') or ncm.startswith('1101'):
+        termo_busca = "cesta básica"
+        status = "ZERO"
+    elif ncm.startswith('3304') or ncm.startswith('3401'):
+        termo_busca = "higiene"
+        status = "REDUZIDA"
+    elif ncm.startswith('2710'):
+        termo_busca = "combustíveis"
+        status = "MONOFASICA"
+    else:
+        # Tenta pegar o CST padrão do JSON (Geralmente 000 ou 01)
+        termo_busca = "tributação integral"
+        status = "PADRAO"
+
+    # --- BUSCA NO JSON ---
+    if not df_regras.empty:
+        # Procura a palavra chave
+        resultado = df_regras[df_regras['Busca'].str.contains(termo_busca, na=False)]
+        
+        if not resultado.empty:
+            # PEGA OS DADOS DO JSON (Incluindo o CST)
+            codigo = resultado.iloc[0]['Código da Classificação Tributária']
+            desc = resultado.iloc[0]['Descrição do Código da Classificação Tributária']
+            
+            # Tenta pegar o CST se a coluna existir no JSON
+            cst = resultado.iloc[0].get('Código da Situação Tributária', 'N/A')
+            
+            return codigo, desc, status, cst
+    
+    return 'VERIFICAR', f'Regra não achada: {termo_busca}', 'ATENCAO', '?'
+
+# --- 4. PROCESSAMENTO DOS XMLS ---
+def processar_xmls(uploaded_files):
+    lista_produtos = []
+    ns = {'ns': 'http://www.portalfiscal.inf.br/nfe'}
+    
+    for arquivo in uploaded_files:
+        try:
+            tree = ET.parse(arquivo)
+            root = tree.getroot()
+            
+            # Tenta ler dados da nota
+            infNFe = root.find('.//ns:infNFe', ns)
+            id_nota = infNFe.attrib.get('Id', '')[3:] if infNFe is not None else 'N/A'
+            
+            det_itens = root.findall('.//ns:det', ns)
+            
+            for item in det_itens:
+                prod = item.find('ns:prod', ns)
+                
+                # Tratamento de erro caso algum campo falte
+                try:
+                    vProd = float(prod.find('ns:vProd', ns).text)
+                except:
+                    vProd = 0.0
+
+                lista_produtos.append({
+                    'Chave NFe': id_nota,
+                    'NCM': prod.find('ns:NCM', ns).text,
+                    'Produto': prod.find('ns:xProd', ns).text,
+                    'CFOP': prod.find('ns:CFOP', ns).text,
+                    'Unid': prod.find('ns:uCom', ns).text,
+                    'Valor': vProd
+                })
+        except Exception as e:
+            continue
+            
+    return pd.DataFrame(lista_produtos)
+
+# --- 5. INTERFACE VISUAL ---
+
+# Sidebar para Upload
+with st.sidebar:
+    st.header("📂 Importação")
+    uploaded_files = st.file_uploader("Selecione arquivos XML", type=['xml'], accept_multiple_files=True)
+
+# Carrega a inteligência
+df_regras = carregar_regras()
+
+if uploaded_files:
+    if df_regras.empty:
+        st.error("🚨 ERRO: Não encontrei o arquivo 'classificacao_tributaria.json'. Verifique a pasta.")
+    else:
+        with st.spinner('Processando XMLs...'):
+            df_base = processar_xmls(uploaded_files)
+            
+            if not df_base.empty:
+                # Criamos um dataframe resumido para análise (agrupado por produto único)
+                df_analise = df_base.drop_duplicates(subset=['NCM', 'Produto', 'CFOP']).copy()
+                
+                # APLICA A CLASSIFICAÇÃO
+                resultados = df_analise.apply(
+                    lambda row: classificar_item(row['NCM'], row['CFOP'], df_regras), axis=1, result_type='expand'
+                )
+                df_analise['cClassTrib Sugerido'] = resultados[0]
+                df_analise['Descrição Legal'] = resultados[1]
+                df_analise['Status'] = resultados[2]
+                
+                # --- DASHBOARD DE RESUMO ---
+                col1, col2, col3, col4 = st.columns(4)
+                col1.metric("Notas Lidas", len(uploaded_files))
+                col2.metric("Produtos Únicos", len(df_analise))
+                col3.metric("Valor Total Processado", f"R$ {df_base['Valor'].sum():,.2f}")
+                
+                atencao = len(df_analise[df_analise['Status'] == 'ATENCAO'])
+                col4.metric("Itens p/ Revisar", atencao, delta_color="inverse" if atencao > 0 else "normal")
+                
+                st.divider()
+                
+                # --- VISUALIZAÇÃO DOS DADOS ---
+                tab1, tab2 = st.tabs(["📋 Tabela Detalhada", "📊 Gráfico de Status"])
+                
+                with tab1:
+                    filtro = st.multiselect("Filtrar por Status:", df_analise['Status'].unique(), default=df_analise['Status'].unique())
+                    st.dataframe(df_analise[df_analise['Status'].isin(filtro)], use_container_width=True)
+                
+                with tab2:
+                    st.bar_chart(df_analise['Status'].value_counts())
+                
+                # --- DOWNLOAD ---
+                csv = df_analise.to_csv(index=False, sep=';', decimal=',').encode('utf-8-sig')
+                st.download_button(
+                    label="📥 Baixar Relatório em Excel (CSV)",
+                    data=csv,
+                    file_name="Analise_Tributaria.csv",
+                    mime="text/csv"
+                )
+                
+            else:
+                st.warning("Nenhum dado encontrado nos XMLs.")
+
+else:
+    st.info("Aguardando arquivos XML...")
