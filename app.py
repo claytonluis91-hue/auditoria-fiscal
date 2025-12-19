@@ -19,8 +19,8 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("Sistema de Auditoria Fiscal 13.3 (Layout Ajustado)")
-st.caption("Novo CST posicionado antes do Código de Classificação")
+st.title("Sistema de Auditoria Fiscal 14.0 (Foco no Produto)")
+st.caption("Visualização por Cód. Produto | Listagem de arquivos em aba separada")
 st.divider()
 
 # --- 2. LISTA MESTRA ---
@@ -207,11 +207,18 @@ if uploaded_xmls:
         try:
             tree = ET.parse(arquivo)
             root = tree.getroot()
-            chave = root.find('.//ns:infNFe', ns).attrib.get('Id', '')[3:]
+            infNFe = root.find('.//ns:infNFe', ns)
+            chave = infNFe.attrib.get('Id', '')[3:] if infNFe is not None else 'N/A'
+            
             for det in root.findall('.//ns:det', ns):
                 prod = det.find('ns:prod', ns)
+                
+                # --- NOVA EXTRAÇÃO: CÓDIGO DO PRODUTO (cProd) ---
+                c_prod = prod.find('ns:cProd', ns).text
+                
                 lista_itens.append({
-                    'Chave NFe': chave,
+                    'Cód. Produto': c_prod, # Substitui a chave na lista principal
+                    'Chave NFe': chave,     # Mantém para a aba separada
                     'NCM': prod.find('ns:NCM', ns).text,
                     'Produto': prod.find('ns:xProd', ns).text,
                     'CFOP': prod.find('ns:CFOP', ns).text,
@@ -222,56 +229,57 @@ if uploaded_xmls:
     
     if lista_itens:
         df_base = pd.DataFrame(lista_itens)
-        df_analise = df_base.drop_duplicates(subset=['NCM', 'Produto', 'CFOP']).copy()
+        df_analise = df_base.drop_duplicates(subset=['Cód. Produto', 'NCM', 'CFOP']).copy()
         
-        # O apply retorna na ordem: cClassTrib, Descrição, Status, Novo CST, Origem, TIPI
-        # Note que a ordem aqui na atribuição TEM que casar com o return da função
         resultados = df_analise.apply(
             lambda row: classificar_item(row, mapa_lei, df_regras_json, df_tipi), 
             axis=1, result_type='expand'
         )
         
-        # Atribui os resultados às colunas do DataFrame
         df_analise[['cClassTrib', 'Descrição', 'Status', 'Novo CST', 'Origem Legal', 'Validação TIPI']] = resultados
         
-        # --- REORDENAÇÃO DAS COLUNAS (AQUI É A MÁGICA) ---
-        colunas_ordenadas = [
-            'Chave NFe', 
+        # --- PREPARAÇÃO DO RELATÓRIO FINAL ---
+        
+        # 1. Tabela Principal (Sem a Chave NFe)
+        cols_principal = [
+            'Cód. Produto', # Primeiro lugar!
             'NCM', 
             'Produto', 
             'CFOP', 
             'Valor', 
-            'Novo CST',       # <--- Agora antes do cClassTrib
+            'Novo CST', 
             'cClassTrib', 
             'Descrição', 
             'Status', 
             'Origem Legal', 
             'Validação TIPI'
         ]
+        df_principal = df_analise[cols_principal]
         
-        # Filtra e ordena o DataFrame final
-        df_final = df_analise[colunas_ordenadas]
+        # 2. Tabela de Arquivos (Aba Separada)
+        df_arquivos = df_base[['Chave NFe']].drop_duplicates().reset_index(drop=True)
+        df_arquivos.columns = ['Arquivos / Chaves NFe Processadas']
         
+        # Dashboard
         st.write("### 📊 Auditoria Fiscal")
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Itens", len(df_final))
-        c2.metric("Na Lei", len(df_final[df_final['Origem Legal'].str.contains("Anexo")]))
-        n_erros = len(df_final[df_final['Validação TIPI'].str.contains("não cadastrado")])
+        c1.metric("Itens (Por Produto)", len(df_principal))
+        c2.metric("Na Lei", len(df_principal[df_principal['Origem Legal'].str.contains("Anexo")]))
+        n_erros = len(df_principal[df_principal['Validação TIPI'].str.contains("não cadastrado")])
         c3.metric("Erros NCM", n_erros, delta="Atenção" if n_erros > 0 else None, delta_color="inverse")
-        n_is = len(df_final[df_final['Status'] == "ALERTA SELETIVO"])
+        n_is = len(df_principal[df_principal['Status'] == "ALERTA SELETIVO"])
         c4.metric("Seletivo", n_is, delta="Bloqueado" if n_is > 0 else None, delta_color="inverse")
         
-        tab1, tab2, tab3 = st.tabs(["Auditoria Completa", "Destaques Lei", "Erros TIPI"])
-        with tab1: st.dataframe(df_final, use_container_width=True)
-        with tab2: st.dataframe(df_final[df_final['Origem Legal'].str.contains("Anexo")], use_container_width=True)
-        with tab3: 
-            if not df_tipi.empty: st.dataframe(df_final[df_final['Validação TIPI'].str.contains("não cadastrado")], use_container_width=True)
-            else: st.info("TIPI não carregada.")
+        tab1, tab2, tab3 = st.tabs(["Auditoria (Por Produto)", "Arquivos Processados", "Destaques Lei"])
+        with tab1: st.dataframe(df_principal, use_container_width=True)
+        with tab2: st.dataframe(df_arquivos, use_container_width=True)
+        with tab3: st.dataframe(df_principal[df_principal['Origem Legal'].str.contains("Anexo")], use_container_width=True)
 
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-            df_final.to_excel(writer, index=False, sheet_name="Auditoria")
+            df_principal.to_excel(writer, index=False, sheet_name="Auditoria")
+            df_arquivos.to_excel(writer, index=False, sheet_name="Arquivos Processados") # Aba Nova!
             if not df_tipi.empty:
-                df_final[df_final['Validação TIPI'].str.contains("não cadastrado")].to_excel(writer, index=False, sheet_name="Erros NCM")
+                df_principal[df_principal['Validação TIPI'].str.contains("não cadastrado")].to_excel(writer, index=False, sheet_name="Erros NCM")
         
-        st.download_button("📥 Baixar Relatório Final (.xlsx)", buffer, "Auditoria_Nascel_v13_3.xlsx", "primary")
+        st.download_button("📥 Baixar Relatório Final (.xlsx)", buffer, "Auditoria_Nascel_v14.xlsx", "primary")
