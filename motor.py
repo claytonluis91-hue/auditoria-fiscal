@@ -6,7 +6,7 @@ from bs4 import BeautifulSoup
 import re
 import os
 
-# --- DADOS E REGRAS ---
+# --- DADOS E REGRAS (MANTIDO) ---
 TEXTO_MESTRA = """
 ANEXO I (ZERO)
 1006.20 1006.30 1006.40.00 0401.10.10 0401.10.90 0401.20.10 0401.20.90 0401.40.10 0401.50.10
@@ -117,6 +117,10 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliquota_padrao):
     v_cofins = float(row.get('vCOFINS', 0))
     imposto_atual = v_icms + v_pis + v_cofins
 
+    # Base de cálculo: 
+    # Se for VENDA, subtraímos o imposto por dentro para achar a base líquida.
+    # Se for COMPRA, o crédito é sobre o valor de aquisição (tecnicamente).
+    # Para o simulador, vamos manter a regra de "limpar" o imposto antigo para projetar o novo limpo
     base_liquida = valor_prod - imposto_atual
     if base_liquida < 0: base_liquida = 0 
     
@@ -138,8 +142,9 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliquota_padrao):
             origem = f"{anexo} (via {tent})"
             break
             
-    if cfop.startswith('7'): 
-        return '410004', 'Exportação', 'IMUNE', '50', 'CFOP', validacao, 0.0, 0.0
+    # Tratamento de Exportação (Venda) ou Importação (Entrada) - CFOPs
+    if cfop.startswith('7') or cfop.startswith('3'): 
+        return '410004', 'Comércio Exterior', 'IMUNE/SUSPENSO', '50', 'CFOP', validacao, 0.0, 0.0
         
     elif anexo:
         regra = CONFIG_ANEXOS[anexo]
@@ -156,8 +161,17 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliquota_padrao):
 
     return '000001', 'Padrão - Tributação Integral', 'PADRAO', '01', origem, validacao, imposto_atual, imposto_padrao_projetado
 
-def processar_xml_detalhado(tree, ns):
-    """Extrai dados do XML com foco nos impostos"""
+def extrair_nome_empresa_xml(tree, ns):
+    root = tree.getroot()
+    emit = root.find('.//ns:emit', ns)
+    if emit is not None:
+        xNome = emit.find('ns:xNome', ns)
+        if xNome is not None:
+            return xNome.text
+    return "Empresa Desconhecida"
+
+def processar_xml_detalhado(tree, ns, tipo_op='SAIDA'):
+    """Extrai dados do XML. Se tipo_op for 'ENTRADA', podemos ajustar campos específicos se necessário."""
     lista = []
     root = tree.getroot()
     infNFe = root.find('.//ns:infNFe', ns)
@@ -188,6 +202,34 @@ def processar_xml_detalhado(tree, ns):
             'Valor': float(prod.find('ns:vProd', ns).text),
             'vICMS': v_icms,
             'vPIS': v_pis,
-            'vCOFINS': v_cofins
+            'vCOFINS': v_cofins,
+            'Tipo': tipo_op
         })
     return lista
+
+def processar_sped_fiscal(arquivo):
+    lista_produtos = []
+    nome_empresa = "Empresa SPED"
+    conteudo = arquivo.getvalue().decode('latin-1', errors='ignore')
+    linhas = conteudo.split('\n')
+    
+    for linha in linhas:
+        if not linha.startswith('|'): continue
+        campos = linha.split('|')
+        registro = campos[1]
+        
+        if registro == '0000':
+            if len(campos) > 6: nome_empresa = campos[6]
+        elif registro == '0200':
+            if len(campos) > 8:
+                lista_produtos.append({
+                    'Cód. Produto': campos[2],
+                    'Chave NFe': 'CADASTRO SPED',
+                    'NCM': campos[8],
+                    'Produto': campos[3],
+                    'CFOP': '0000',
+                    'Valor': 0.0,
+                    'vICMS': 0.0, 'vPIS': 0.0, 'vCOFINS': 0.0,
+                    'Tipo': 'CADASTRO'
+                })
+    return nome_empresa, lista_produtos
