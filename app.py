@@ -8,22 +8,104 @@ import re
 import io
 import os
 
-# --- 1. CONFIGURAÇÃO VISUAL ---
-st.set_page_config(page_title="Auditoria Fiscal - LCP 214", page_icon="⚖️", layout="wide")
+# --- 1. CONFIGURAÇÃO DA PÁGINA E DESIGN SYSTEM ---
+st.set_page_config(
+    page_title="Nascel Tax Audit",
+    page_icon="🛡️",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# CSS PROFISSIONAL (Modo Escuro/Claro Compatível + Estilo Fintech)
 st.markdown("""
     <style>
-    .main {background-color: #f8f9fa;}
-    h1 {color: #1B4F72;}
-    .stMetric {background-color: #fff; border-left: 5px solid #1B4F72; box-shadow: 2px 2px 5px rgba(0,0,0,0.1);}
-    div[data-testid="stExpander"] div[role="button"] p {font-size: 1.1rem; font-weight: bold;}
+    /* Fontes e Cores Globais */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+    
+    html, body, [class*="css"] {
+        font-family: 'Inter', sans-serif;
+    }
+    
+    /* Cabeçalho */
+    .main-header {
+        font-size: 2.5rem;
+        font-weight: 700;
+        color: #0F2027; /* Azul Escuro Profundo */
+        background: -webkit-linear-gradient(#203A43, #2C5364);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        margin-bottom: 0px;
+    }
+    
+    .sub-header {
+        font-size: 1.1rem;
+        color: #5D6D7E;
+        margin-bottom: 2rem;
+    }
+
+    /* Cartões de Métricas (KPIs) */
+    div[data-testid="stMetric"] {
+        background-color: #ffffff;
+        border: 1px solid #e0e0e0;
+        border-radius: 10px;
+        padding: 15px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        transition: transform 0.2s;
+    }
+    div[data-testid="stMetric"]:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 12px rgba(0,0,0,0.1);
+        border-color: #2C5364;
+    }
+    div[data-testid="stMetricLabel"] {
+        color: #5D6D7E;
+        font-size: 0.9rem;
+    }
+    div[data-testid="stMetricValue"] {
+        color: #2C5364;
+        font-weight: 700;
+    }
+
+    /* Tabelas */
+    .stDataFrame {
+        border-radius: 10px;
+        overflow: hidden;
+    }
+
+    /* Botão Principal */
+    div.stButton > button:first-child {
+        background-color: #2C5364;
+        color: white;
+        border-radius: 8px;
+        border: none;
+        padding: 0.5rem 1rem;
+        font-weight: 600;
+    }
+    div.stButton > button:first-child:hover {
+        background-color: #203A43;
+    }
+    
+    /* Sidebar */
+    section[data-testid="stSidebar"] {
+        background-color: #f8f9fa;
+        border-right: 1px solid #e0e0e0;
+    }
     </style>
     """, unsafe_allow_html=True)
 
-st.title("Sistema de Auditoria Fiscal 16.0 (Expansão Inteligente)")
-st.caption("Correção: Generalização de Capítulos e Posições do Anexo VII")
+# --- 2. CABEÇALHO DA APLICAÇÃO ---
+col_logo, col_title = st.columns([1, 6])
+with col_logo:
+    # Placeholder para logo (pode ser substituído por st.image)
+    st.markdown("## 🛡️") 
+with col_title:
+    st.markdown('<div class="main-header">NASCEL TAX AUDIT</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sub-header">Inteligência Fiscal para LCP 214 e Reforma Tributária</div>', unsafe_allow_html=True)
+
 st.divider()
 
-# --- 2. LISTA MESTRA (REFINADA) ---
+# --- 3. DADOS E LÓGICA (MANTIDA VERSÃO 16.0) ---
+
 TEXTO_MESTRA = """
 ANEXO I (ZERO)
 1006.20 1006.30 1006.40.00 (Arroz)
@@ -77,7 +159,6 @@ ANEXO XV (ZERO)
 0714 0801 (Raízes/Coco)
 """
 
-# --- 3. CONFIGURAÇÃO TRIBUTÁRIA ---
 CONFIG_ANEXOS = {
     "ANEXO I": {"Descricao": "Cesta Básica Nacional", "cClassTrib": "200003", "CST": "40", "Status": "ZERO (Anexo I)", "Caps": []},
     "ANEXO IV": {"Descricao": "Dispositivos Médicos", "cClassTrib": "200005", "CST": "20", "Status": "REDUZIDA 60% (Anexo IV)", "Caps": ["30","90"]},
@@ -88,7 +169,6 @@ CONFIG_ANEXOS = {
     "ANEXO XV": {"Descricao": "Hortifruti e Ovos", "cClassTrib": "200003", "CST": "40", "Status": "ZERO (Anexo XV)", "Caps": ["04","06","07","08"]}
 }
 
-# --- 4. CARREGAMENTO ---
 @st.cache_data
 def carregar_tipi(uploaded_file=None):
     arquivo = uploaded_file if uploaded_file else ("tipi.xlsx" if os.path.exists("tipi.xlsx") else None)
@@ -135,28 +215,19 @@ def extrair_regras(texto_fonte, mapa_existente, nome_fonte):
             c = codigo.replace('.', '')
             if len(c) in [4,6,8]:
                 if not caps or any(c.startswith(cap) for cap in caps):
-                    # PRIORIDADE: Backup > Site
-                    # Além disso, se já existe uma regra, só sobrescreve se a nova for "mais específica" 
-                    # (isso é complexo, então vamos confiar na ordem da lista mestra e priorizar Backup)
                     if c not in mapa_existente or nome_fonte == "BACKUP":
                         mapa_existente[c] = nome_anexo
-                        
-                        # --- EXPANSÃO INTELIGENTE (NOVIDADE V16) ---
-                        # Se achamos 1101.00.10, adicionamos também 1101 e 110100 como válidos
-                        # Isso garante que a família seja reconhecida
                         if len(c) == 8:
                             pai = c[:4]
                             if pai not in mapa_existente: mapa_existente[pai] = nome_anexo
                         if len(c) == 6:
                             pai = c[:4]
                             if pai not in mapa_existente: mapa_existente[pai] = nome_anexo
-
     return mapa_existente
 
 @st.cache_data
 def carregar_base_legal():
     mapa = {}
-    # 1. Site
     try:
         url = "https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp214.htm"
         resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
@@ -164,19 +235,15 @@ def carregar_base_legal():
         mapa = extrair_regras(soup.get_text(separator=' '), mapa, "SITE")
     except: pass
     
-    # 2. Backup Manual (Garantia)
     mapa = extrair_regras(TEXTO_MESTRA, mapa, "BACKUP")
     
-    # 3. CAPÍTULOS INTEIROS (FORÇA BRUTA PARA ANEXO VII)
-    # Se o item começar com 10, 11, 12 e não tiver regra específica (como Zero), cai no VII.
+    # Força Capítulos Inteiros no Anexo VII
     caps_anexo_vii = ['10', '11', '12'] 
     for cap in caps_anexo_vii:
-        if cap not in mapa:
-            mapa[cap] = "ANEXO VII"
+        if cap not in mapa: mapa[cap] = "ANEXO VII"
             
     return mapa
 
-# --- 5. LÓGICA ---
 def verificar_seletivo(ncm):
     ncm = str(ncm).replace('.', '')
     return any(ncm.startswith(p) for p in ['2203','2204','2205','2206','2207','2208','24','87','93'])
@@ -185,7 +252,7 @@ def classificar_item(row, mapa_regras, df_json, df_tipi):
     ncm = str(row['NCM']).replace('.', '')
     cfop = str(row['CFOP']).replace('.', '')
     
-    validacao = "⚠️ NCM não cadastrado na TIPI"
+    validacao = "⚠️ NCM Ausente (TIPI)"
     if not df_tipi.empty:
         if ncm in df_tipi.index: validacao = "✅ NCM Válido"
         elif ncm[:4] in df_tipi.index: validacao = "✅ Posição Válida"
@@ -194,12 +261,10 @@ def classificar_item(row, mapa_regras, df_json, df_tipi):
         return '000001', f'Produto sujeito a Imposto Seletivo', 'ALERTA SELETIVO', '02', 'Trava', validacao
 
     anexo, origem = None, "Regra Geral"
-    
-    # Busca Hierárquica: 8 -> 6 -> 4 -> 2 dígitos (Capítulo)
     for tent in [ncm, ncm[:6], ncm[:4], ncm[:2]]:
         if tent in mapa_regras:
             anexo = mapa_regras[tent]
-            origem = f"{anexo} (Via {tent})"
+            origem = f"{anexo} (via {tent})"
             break
             
     if cfop.startswith('7'): 
@@ -218,20 +283,31 @@ def classificar_item(row, mapa_regras, df_json, df_tipi):
 
     return '000001', 'Padrão - Tributação Integral', 'PADRAO', '01', origem, validacao
 
-# --- 6. INTERFACE ---
+# --- INTERFACE ---
 df_regras_json = carregar_json_regras()
 
 with st.sidebar:
-    st.image("https://cdn-icons-png.flaticon.com/512/3029/3029337.png", width=60)
-    st.markdown("### Painel de Controle")
-    uploaded_xmls = st.file_uploader("1. XMLs de Venda", type=['xml'], accept_multiple_files=True)
-    uploaded_tipi = st.file_uploader("2. Atualizar TIPI (Opcional)", type=['xlsx', 'csv'])
+    st.markdown("### 🎛️ Painel de Controle")
+    uploaded_xmls = st.file_uploader("📂 Arraste os XMLs de Venda", type=['xml'], accept_multiple_files=True)
+    
+    with st.expander("⚙️ Configurações Avançadas"):
+        uploaded_tipi = st.file_uploader("Atualizar Tabela TIPI", type=['xlsx', 'csv'])
+        if st.button("Recarregar Regras da Lei"):
+            carregar_base_legal.clear()
+            st.rerun()
+            
     st.divider()
-    with st.spinner("Carregando..."):
+    with st.spinner("Sincronizando bases..."):
         mapa_lei = carregar_base_legal()
-        df_tipi = carregar_tipi(uploaded_tipi) 
-    st.success(f"⚖️ Lei Mapeada: {len(mapa_lei)} regras")
-    if not df_tipi.empty: st.success(f"📚 TIPI Carregada: {len(df_tipi)} códigos")
+        df_tipi = carregar_tipi(uploaded_tipi)
+        
+    st.markdown(f"""
+    <div style='background-color:#E8F6F3; padding:10px; border-radius:5px; border-left: 4px solid #1ABC9C;'>
+        <small><b>Status do Sistema:</b><br>
+        ⚖️ Regras Fiscais: <b>{len(mapa_lei)}</b><br>
+        📚 Validação TIPI: <b>{'Ativa' if not df_tipi.empty else 'Inativa'}</b></small>
+    </div>
+    """, unsafe_allow_html=True)
 
 if uploaded_xmls:
     lista_itens = []
@@ -272,27 +348,34 @@ if uploaded_xmls:
         cols_principal = ['Cód. Produto', 'NCM', 'Produto', 'CFOP', 'Valor', 'Novo CST', 'cClassTrib', 'Descrição', 'Status', 'Origem Legal', 'Validação TIPI']
         df_principal = df_analise[cols_principal]
         df_arquivos = df_base[['Chave NFe']].drop_duplicates().reset_index(drop=True)
-        df_arquivos.columns = ['Arquivos / Chaves NFe Processadas']
+        df_arquivos.columns = ['Arquivos Processados']
         
-        st.write("### 📊 Auditoria Fiscal 16.0")
+        st.markdown("### 📊 Resultado da Auditoria")
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Itens", len(df_principal))
-        c2.metric("Na Lei", len(df_principal[df_principal['Origem Legal'].str.contains("Anexo")]))
-        n_erros = len(df_principal[df_principal['Validação TIPI'].str.contains("não cadastrado")])
-        c3.metric("Erros NCM", n_erros, delta="Atenção" if n_erros > 0 else None, delta_color="inverse")
-        n_is = len(df_principal[df_principal['Status'] == "ALERTA SELETIVO"])
-        c4.metric("Seletivo", n_is, delta="Bloqueado" if n_is > 0 else None, delta_color="inverse")
+        c1.metric("Produtos Auditados", len(df_principal))
+        c2.metric("Enquadrados na Lei", len(df_principal[df_principal['Origem Legal'].str.contains("Anexo")]))
         
-        tab1, tab2, tab3 = st.tabs(["Auditoria", "Arquivos", "Destaques Lei"])
+        erros_tipi = len(df_principal[df_principal['Validação TIPI'].str.contains("Ausente")])
+        c3.metric("Erros Cadastro (TIPI)", erros_tipi, delta="Atenção" if erros_tipi > 0 else "OK", delta_color="inverse")
+        
+        c4.metric("Seletivo / Travas", len(df_principal[df_principal['Status'] == "ALERTA SELETIVO"]))
+        
+        tab1, tab2, tab3 = st.tabs(["📋 Lista Geral", "📂 Arquivos", "🔍 Apenas Benefícios"])
         with tab1: st.dataframe(df_principal, use_container_width=True)
         with tab2: st.dataframe(df_arquivos, use_container_width=True)
         with tab3: st.dataframe(df_principal[df_principal['Origem Legal'].str.contains("Anexo")], use_container_width=True)
 
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-            df_principal.to_excel(writer, index=False, sheet_name="Auditoria")
-            df_arquivos.to_excel(writer, index=False, sheet_name="Arquivos Processados")
+            df_principal.to_excel(writer, index=False, sheet_name="Auditoria Detalhada")
+            df_arquivos.to_excel(writer, index=False, sheet_name="Arquivos")
             if not df_tipi.empty:
-                df_principal[df_principal['Validação TIPI'].str.contains("não cadastrado")].to_excel(writer, index=False, sheet_name="Erros NCM")
+                df_principal[df_principal['Validação TIPI'].str.contains("Ausente")].to_excel(writer, index=False, sheet_name="Erros Cadastro")
         
-        st.download_button("📥 Baixar Relatório Final (.xlsx)", buffer, "Auditoria_Nascel_v16.xlsx", "primary")
+        st.download_button(
+            label="📥 Baixar Relatório Completo (.xlsx)",
+            data=buffer,
+            file_name="Auditoria_Nascel_v17.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="primary"
+        )
