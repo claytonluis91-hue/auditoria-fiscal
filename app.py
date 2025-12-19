@@ -8,10 +8,10 @@ import re
 import io
 import os
 
-# --- 1. CONFIGURAÇÃO DA PÁGINA E DESIGN SYSTEM (NASCEL THEME) ---
+# --- 1. CONFIGURAÇÃO DA PÁGINA E DESIGN SYSTEM ---
 st.set_page_config(
     page_title="cClass Auditor AI",
-    page_icon="🟧", # Icone laranja
+    page_icon="🟧",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -26,6 +26,12 @@ st.markdown("""
         font-family: 'Roboto', sans-serif;
     }
     
+    /* === COR DO TEXTO GERAL (CINZA ESCURO) === */
+    .stMarkdown p, .stMarkdown li, .stDataFrame, div[data-testid="stMarkdownContainer"] p {
+        color: #333333 !important; /* Cinza Escuro para leitura */
+        font-size: 1rem;
+    }
+    
     /* Cabeçalho Principal */
     .main-header {
         font-size: 2.8rem;
@@ -35,29 +41,29 @@ st.markdown("""
         letter-spacing: -1px;
     }
     
-    .sub-header {
-        font-size: 1.2rem;
-        color: #EF6C00; /* Laranja Nascel Vibrante */
-        font-weight: 500;
+    /* Subtítulo (Linha laranja decorativa) */
+    .sub-header-line {
+        height: 4px;
+        width: 100px;
+        background-color: #EF6C00; /* Laranja Nascel */
         margin-bottom: 2rem;
-        border-bottom: 2px solid #EF6C00;
-        display: inline-block;
-        padding-bottom: 5px;
+        margin-top: 5px;
+        border-radius: 2px;
     }
 
     /* Cartões de Métricas (KPIs) */
     div[data-testid="stMetric"] {
         background-color: #ffffff;
-        border: 1px solid #e0e0e0;
+        border: 1px solid #dcdcdc; /* Borda cinza suave */
         border-radius: 8px;
         padding: 15px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
         border-left: 6px solid #EF6C00; /* Borda Laranja */
         transition: all 0.3s ease;
     }
     div[data-testid="stMetric"]:hover {
         transform: translateY(-3px);
-        box-shadow: 0 8px 15px rgba(239, 108, 0, 0.15); /* Sombra Laranja Suave */
+        box-shadow: 0 8px 15px rgba(239, 108, 0, 0.15);
     }
     div[data-testid="stMetricLabel"] {
         color: #546E7A; /* Cinza Médio */
@@ -82,7 +88,7 @@ st.markdown("""
         transition: background-color 0.3s;
     }
     div.stButton > button:first-child:hover {
-        background-color: #E65100; /* Laranja Mais Escuro no Hover */
+        background-color: #E65100; /* Laranja Mais Escuro */
         box-shadow: 0 4px 10px rgba(0,0,0,0.2);
     }
 
@@ -97,15 +103,8 @@ st.markdown("""
         background-color: #F4F6F7; /* Cinza Muito Claro */
         border-right: 1px solid #CFD8DC;
     }
-    
-    /* Ajustes Gerais */
-    h1, h2, h3 {
+    section[data-testid="stSidebar"] h1, section[data-testid="stSidebar"] h2, section[data-testid="stSidebar"] h3 {
         color: #2C3E50;
-    }
-    
-    /* Alertas e Infos */
-    .stAlert {
-        border-radius: 8px;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -113,13 +112,13 @@ st.markdown("""
 # --- 2. CABEÇALHO DA APLICAÇÃO ---
 col1, col2 = st.columns([0.5, 8])
 with col1:
-    # Simulação de Logo (Pode ser uma imagem real depois)
     st.markdown("## 🟧") 
 with col2:
     st.markdown('<div class="main-header">cClass Auditor AI</div>', unsafe_allow_html=True)
-    st.markdown('<div class="sub-header">Tecnologia Fiscal Grupo Nascel</div>', unsafe_allow_html=True)
+    # Removida a frase, mantida apenas a linha decorativa laranja
+    st.markdown('<div class="sub-header-line"></div>', unsafe_allow_html=True)
 
-# --- 3. DADOS E LÓGICA (MANTIDO 100% IGUAL À VERSÃO 16/17) ---
+# --- 3. DADOS E LÓGICA (MANTIDO VERSÃO 16.0) ---
 
 TEXTO_MESTRA = """
 ANEXO I (ZERO)
@@ -315,10 +314,9 @@ with st.sidebar:
         mapa_lei = carregar_base_legal()
         df_tipi = carregar_tipi(uploaded_tipi)
         
-    # Status Card - Estilo Nascel
     st.markdown(f"""
     <div style='background-color:#ffffff; padding:10px; border-radius:5px; border-left: 4px solid #EF6C00; border: 1px solid #e0e0e0;'>
-        <small style='color: #2C3E50;'><b>STATUS DO SISTEMA</b><br>
+        <small style='color: #333333;'><b>STATUS DO SISTEMA</b><br>
         ⚖️ Regras Ativas: <b>{len(mapa_lei)}</b><br>
         📚 Validação TIPI: <b>{'Ativa ✅' if not df_tipi.empty else 'Inativa ⚠️'}</b></small>
     </div>
@@ -390,7 +388,7 @@ if uploaded_xmls:
         st.download_button(
             label="📥 BAIXAR RELATÓRIO COMPLETO",
             data=buffer,
-            file_name="Auditoria_Nascel_v18.xlsx",
+            file_name="Auditoria_Nascel_v19.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             type="primary"
         )
