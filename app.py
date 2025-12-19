@@ -19,11 +19,11 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("Sistema de Auditoria Fiscal 14.1 (Revisão Anexo VII)")
-st.caption("Visualização por Cód. Produto | Listagem de arquivos em aba separada")
+st.title("Sistema de Auditoria Fiscal 16.0 (Expansão Inteligente)")
+st.caption("Correção: Generalização de Capítulos e Posições do Anexo VII")
 st.divider()
 
-# --- 2. LISTA MESTRA (ATUALIZADA COM SUA REVISÃO) ---
+# --- 2. LISTA MESTRA (REFINADA) ---
 TEXTO_MESTRA = """
 ANEXO I (ZERO)
 1006.20 1006.30 1006.40.00 (Arroz)
@@ -34,56 +34,53 @@ ANEXO I (ZERO)
 0713.33.19 0713.33.29 0713.33.99 0713.35.90 (Feijões)
 09.01 2101.1 (Café)
 1513.21.20 (Óleo Babaçu)
-1106.20.00 1903.00.00 1102.20.00 1103.13.00 1104.19.00 1104.23.00 (Farinhas/Grãos)
-1101.00.10 1104.12.00 1104.22.00 1102.90.00 (Trigo/Aveia)
-1701.14.00 1701.99.00 1902.1 (Açúcar/Massas)
+1106.20.00 1903.00.00 1102.20.00 1103.13.00 1104.19.00 1104.23.00 (Farinhas Específicas Zero)
+1101.00.10 1104.12.00 1104.22.00 1102.90.00 (Trigo/Aveia Zero)
+1701.14.00 1701.99.00 1902.1 (Açúcar/Massas Zero)
 1905.90.90 1901.20.10 1901.20.90 (Pão Francês)
 02.01 02.02 02.03 02.04 02.07 0206.2 0206.4 0210.1 (Carnes)
 03.02 03.03 03.04 (Peixes)
 0406.10.10 0406.10.90 0406.20.00 0406.90.10 0406.90.20 0406.90.30 (Queijos)
 2501.00.20 2501.00.90 09.03 (Sal/Mate)
 
-ANEXO IV (RED 60%)
-3926.90.30 3701.10.10 9021.50.00 9021.90.12 4015.1 9018.31 9018.32
-
 ANEXO VII (RED 60%)
-0306.1 0306.3 0307.31.00 0307.32.00 0307.42.00 0307.43 0307.51.00 0307.52.00 0307.91.00 0307.92.00 (Crustáceos)
-0403.20.00 0403.90.00 2202.99.00 (Bebidas Lácteas/Leite Fermentado)
+0306.1 0306.3 0307 (Crustáceos/Moluscos)
+0403 (Leite Fermentado/Iogurte) 2202.99.00 (Bebida Láctea)
 0409.00.00 (Mel)
-1101.00 11.02 11.05 11.06 12.08 (Farinhas)
-1103.11.00 1103.19.00 1104.1 1104.2 (Grãos e Sêmolas)
-1108.12.00 (Amido de Milho)
-1507.90 15.08 15.11 15.12 15.13 15.14 15.15 (Óleos Vegetais)
-1902.20.00 1902.30.00 (Massas)
-20.09 (Sucos) 20.08 (Polpas/Conservas) 2008.1 (Frutas Casca Rija/Amendoim)
+1101 1102 1103 1104 1105 1106 1208 (Farinhas/Grãos/Sêmolas Gerais)
+1108 (Amidos)
+1507 1508 1511 1512 1513 1514 1515 (Óleos Vegetais Gerais)
+1902 (Massas Gerais)
+2009 (Sucos) 2008 (Polpas/Conservas) 
 1905.90.10 (Pão de Forma)
-2002.90.00 (Extrato Tomate)
-Capítulo 07 Capítulo 08 (Hortifruti Processados - Regra Geral)
-Capítulo 10 Capítulo 12 (Cereais e Sementes - Regra Geral)
-20.04 20.05 2002.10.00 (Hortícolas Cozidos)
+2002 (Tomates Prep)
+2004 2005 (Hortícolas Cozidos)
+Capítulo 10 (Cereais)
+Capítulo 12 (Sementes)
+Capítulo 07 (Hortícolas Processados - Exceção do XV)
+Capítulo 08 (Frutas Processadas - Exceção do XV)
 
 ANEXO VIII (RED 60%)
-3401.11.90 3401.19.00 (Sabões)
-3306.10.00 (Dentifrícios)
+3401 (Sabões)
+3306 (Higiene Bucal)
 9603.21.00 (Escovas)
 4818.10.00 (Papel Higiênico)
-9619.00.00 (Fraldas/Absorventes)
+9619.00.00 (Fraldas)
 
 ANEXO XIV (ZERO)
-3004.90.69 3004.90.79 3002.15.90 3002.41.29 (Lista Medicamentos)
+3004 3002 (Medicamentos Gerais)
 
 ANEXO XV (ZERO)
 0407.2 (Ovos)
-07.01 07.02 07.03 07.04 07.05 07.06 07.08 07.09 07.10 (Hortifruti Fresco)
-08.03 08.04 08.05 08.06 08.07 08.08 08.09 08.10 08.11 (Frutas Frescas)
-07.14 0801.1 (Raízes/Coco)
+0701 0702 0703 0704 0705 0706 0708 0709 0710 (Hortifruti Fresco)
+0803 0804 0805 0806 0807 0808 0809 0810 0811 (Frutas Frescas)
+0714 0801 (Raízes/Coco)
 """
 
-# --- 3. CONFIGURAÇÃO TRIBUTÁRIA (CAPÍTULOS AJUSTADOS) ---
+# --- 3. CONFIGURAÇÃO TRIBUTÁRIA ---
 CONFIG_ANEXOS = {
     "ANEXO I": {"Descricao": "Cesta Básica Nacional", "cClassTrib": "200003", "CST": "40", "Status": "ZERO (Anexo I)", "Caps": []},
-    "ANEXO IV": {"Descricao": "Dispositivos Médicos", "cClassTrib": "200005", "CST": "20", "Status": "REDUZIDA 60% (Anexo IV)", "Caps": ["30","37","39","40","84","90","94"]},
-    # Adicionado 07, 08, 10, 12 e 22 no Anexo VII conforme sua lista
+    "ANEXO IV": {"Descricao": "Dispositivos Médicos", "cClassTrib": "200005", "CST": "20", "Status": "REDUZIDA 60% (Anexo IV)", "Caps": ["30","90"]},
     "ANEXO VII": {"Descricao": "Alimentos Reduzidos", "cClassTrib": "200003", "CST": "20", "Status": "REDUZIDA 60% (Anexo VII)", "Caps": ["03","04","07","08","10","11","12","15","16","19","20","21","22"]},
     "ANEXO VIII": {"Descricao": "Higiene Pessoal e Limpeza", "cClassTrib": "200035", "CST": "20", "Status": "REDUZIDA 60% (Anexo VIII)", "Caps": ["33","34","48","96"]},
     "ANEXO XII": {"Descricao": "Dispositivos Médicos (Zero)", "cClassTrib": "200005", "CST": "40", "Status": "ZERO (Anexo XII)", "Caps": ["90"]},
@@ -130,46 +127,58 @@ def extrair_regras(texto_fonte, mapa_existente, nome_fonte):
         inicio = anexos_pos[i][0]
         fim = anexos_pos[i+1][0] if i+1 < len(anexos_pos) else len(texto)
         bloco = texto[inicio:fim]
-        # Regex captura 8 dígitos (1006.30.00), 6 dígitos (1006.30), 4 dígitos (20.04) e Capítulos (Capítulo 07)
+        
         ncms_raw = re.findall(r'(?<!\d)(\d{2,4}\.?\d{0,2}\.?\d{0,2})(?!\d)', bloco)
-        caps_texto = re.findall(r'Capítulo\s+(\d{1,2})', bloco, re.IGNORECASE)
+        caps = CONFIG_ANEXOS[nome_anexo]["Caps"]
         
-        caps_permitidos = CONFIG_ANEXOS[nome_anexo]["Caps"]
-        
-        # Processa NCMs numéricos
         for codigo in ncms_raw:
             c = codigo.replace('.', '')
             if len(c) in [4,6,8]:
-                if not caps_permitidos or any(c.startswith(cap) for cap in caps_permitidos):
+                if not caps or any(c.startswith(cap) for cap in caps):
+                    # PRIORIDADE: Backup > Site
+                    # Além disso, se já existe uma regra, só sobrescreve se a nova for "mais específica" 
+                    # (isso é complexo, então vamos confiar na ordem da lista mestra e priorizar Backup)
                     if c not in mapa_existente or nome_fonte == "BACKUP":
                         mapa_existente[c] = nome_anexo
-        
-        # Processa Capítulos inteiros citados no texto
-        for cap in caps_texto:
-            c = cap.zfill(2)
-            if not caps_permitidos or c in caps_permitidos:
-                if c not in mapa_existente or nome_fonte == "BACKUP":
-                    mapa_existente[c] = nome_anexo
+                        
+                        # --- EXPANSÃO INTELIGENTE (NOVIDADE V16) ---
+                        # Se achamos 1101.00.10, adicionamos também 1101 e 110100 como válidos
+                        # Isso garante que a família seja reconhecida
+                        if len(c) == 8:
+                            pai = c[:4]
+                            if pai not in mapa_existente: mapa_existente[pai] = nome_anexo
+                        if len(c) == 6:
+                            pai = c[:4]
+                            if pai not in mapa_existente: mapa_existente[pai] = nome_anexo
 
     return mapa_existente
 
 @st.cache_data
 def carregar_base_legal():
     mapa = {}
+    # 1. Site
     try:
         url = "https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp214.htm"
         resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
         soup = BeautifulSoup(resp.content, 'html.parser')
         mapa = extrair_regras(soup.get_text(separator=' '), mapa, "SITE")
     except: pass
+    
+    # 2. Backup Manual (Garantia)
     mapa = extrair_regras(TEXTO_MESTRA, mapa, "BACKUP")
+    
+    # 3. CAPÍTULOS INTEIROS (FORÇA BRUTA PARA ANEXO VII)
+    # Se o item começar com 10, 11, 12 e não tiver regra específica (como Zero), cai no VII.
+    caps_anexo_vii = ['10', '11', '12'] 
+    for cap in caps_anexo_vii:
+        if cap not in mapa:
+            mapa[cap] = "ANEXO VII"
+            
     return mapa
 
 # --- 5. LÓGICA ---
 def verificar_seletivo(ncm):
     ncm = str(ncm).replace('.', '')
-    # Bloqueia (Álcool, Fumo, Veículos, Armas). 
-    # ATENÇÃO: 2202 (Bebidas lácteas) NÃO está aqui, então passa.
     return any(ncm.startswith(p) for p in ['2203','2204','2205','2206','2207','2208','24','87','93'])
 
 def classificar_item(row, mapa_regras, df_json, df_tipi):
@@ -185,7 +194,8 @@ def classificar_item(row, mapa_regras, df_json, df_tipi):
         return '000001', f'Produto sujeito a Imposto Seletivo', 'ALERTA SELETIVO', '02', 'Trava', validacao
 
     anexo, origem = None, "Regra Geral"
-    # Adicionado busca por Capítulo (2 dígitos) para cobrir "Capítulo 07", etc.
+    
+    # Busca Hierárquica: 8 -> 6 -> 4 -> 2 dígitos (Capítulo)
     for tent in [ncm, ncm[:6], ncm[:4], ncm[:2]]:
         if tent in mapa_regras:
             anexo = mapa_regras[tent]
@@ -264,7 +274,7 @@ if uploaded_xmls:
         df_arquivos = df_base[['Chave NFe']].drop_duplicates().reset_index(drop=True)
         df_arquivos.columns = ['Arquivos / Chaves NFe Processadas']
         
-        st.write("### 📊 Auditoria Fiscal 14.1")
+        st.write("### 📊 Auditoria Fiscal 16.0")
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Itens", len(df_principal))
         c2.metric("Na Lei", len(df_principal[df_principal['Origem Legal'].str.contains("Anexo")]))
@@ -273,7 +283,7 @@ if uploaded_xmls:
         n_is = len(df_principal[df_principal['Status'] == "ALERTA SELETIVO"])
         c4.metric("Seletivo", n_is, delta="Bloqueado" if n_is > 0 else None, delta_color="inverse")
         
-        tab1, tab2, tab3 = st.tabs(["Auditoria", "Arquivos Processados", "Destaques Lei"])
+        tab1, tab2, tab3 = st.tabs(["Auditoria", "Arquivos", "Destaques Lei"])
         with tab1: st.dataframe(df_principal, use_container_width=True)
         with tab2: st.dataframe(df_arquivos, use_container_width=True)
         with tab3: st.dataframe(df_principal[df_principal['Origem Legal'].str.contains("Anexo")], use_container_width=True)
@@ -285,4 +295,4 @@ if uploaded_xmls:
             if not df_tipi.empty:
                 df_principal[df_principal['Validação TIPI'].str.contains("não cadastrado")].to_excel(writer, index=False, sheet_name="Erros NCM")
         
-        st.download_button("📥 Baixar Relatório Final (.xlsx)", buffer, "Auditoria_Nascel_v14_1.xlsx", "primary")
+        st.download_button("📥 Baixar Relatório Final (.xlsx)", buffer, "Auditoria_Nascel_v16.xlsx", "primary")
