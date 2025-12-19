@@ -6,7 +6,7 @@ from bs4 import BeautifulSoup
 import re
 import os
 
-# --- DADOS E REGRAS (MANTIDO) ---
+# --- DADOS E REGRAS ---
 TEXTO_MESTRA = """
 ANEXO I (ZERO)
 1006.20 1006.30 1006.40.00 0401.10.10 0401.10.90 0401.20.10 0401.20.90 0401.40.10 0401.50.10
@@ -33,14 +33,15 @@ ANEXO XV (ZERO)
 0407.2 0701 0702 0703 0704 0705 0706 0708 0709 0710 0803 0804 0805 0806 0807 0808 0809 0810 0811 0714 0801
 """
 
+# Removi os CSTs hardcoded daqui, pois agora virão do JSON
 CONFIG_ANEXOS = {
-    "ANEXO I": {"Descricao": "Cesta Básica Nacional", "cClassTrib": "200003", "CST": "40", "Reducao": 1.0, "Status": "ZERO (Anexo I)", "Caps": []},
-    "ANEXO IV": {"Descricao": "Dispositivos Médicos", "cClassTrib": "200005", "CST": "20", "Reducao": 0.6, "Status": "REDUZIDA 60% (Anexo IV)", "Caps": ["30","90"]},
-    "ANEXO VII": {"Descricao": "Alimentos Reduzidos", "cClassTrib": "200003", "CST": "20", "Reducao": 0.6, "Status": "REDUZIDA 60% (Anexo VII)", "Caps": ["03","04","07","08","10","11","12","15","16","19","20","21","22"]},
-    "ANEXO VIII": {"Descricao": "Higiene Pessoal e Limpeza", "cClassTrib": "200035", "CST": "20", "Reducao": 0.6, "Status": "REDUZIDA 60% (Anexo VIII)", "Caps": ["33","34","48","96"]},
-    "ANEXO XII": {"Descricao": "Dispositivos Médicos (Zero)", "cClassTrib": "200005", "CST": "40", "Reducao": 1.0, "Status": "ZERO (Anexo XII)", "Caps": ["90"]},
-    "ANEXO XIV": {"Descricao": "Medicamentos (Zero)", "cClassTrib": "200009", "CST": "40", "Reducao": 1.0, "Status": "ZERO (Anexo XIV)", "Caps": ["30"]},
-    "ANEXO XV": {"Descricao": "Hortifruti e Ovos", "cClassTrib": "200003", "CST": "40", "Reducao": 1.0, "Status": "ZERO (Anexo XV)", "Caps": ["04","06","07","08"]}
+    "ANEXO I": {"Descricao": "Cesta Básica Nacional", "cClassTrib": "200003", "Reducao": 1.0, "Status": "ZERO (Anexo I)", "Caps": []},
+    "ANEXO IV": {"Descricao": "Dispositivos Médicos", "cClassTrib": "200005", "Reducao": 0.6, "Status": "REDUZIDA 60% (Anexo IV)", "Caps": ["30","90"]},
+    "ANEXO VII": {"Descricao": "Alimentos Reduzidos", "cClassTrib": "200003", "Reducao": 0.6, "Status": "REDUZIDA 60% (Anexo VII)", "Caps": ["03","04","07","08","10","11","12","15","16","19","20","21","22"]},
+    "ANEXO VIII": {"Descricao": "Higiene Pessoal e Limpeza", "cClassTrib": "200035", "Reducao": 0.6, "Status": "REDUZIDA 60% (Anexo VIII)", "Caps": ["33","34","48","96"]},
+    "ANEXO XII": {"Descricao": "Dispositivos Médicos (Zero)", "cClassTrib": "200005", "Reducao": 1.0, "Status": "ZERO (Anexo XII)", "Caps": ["90"]},
+    "ANEXO XIV": {"Descricao": "Medicamentos (Zero)", "cClassTrib": "200009", "Reducao": 1.0, "Status": "ZERO (Anexo XIV)", "Caps": ["30"]},
+    "ANEXO XV": {"Descricao": "Hortifruti e Ovos", "cClassTrib": "200003", "Reducao": 1.0, "Status": "ZERO (Anexo XV)", "Caps": ["04","06","07","08"]}
 }
 
 def carregar_tipi(uploaded_file=None):
@@ -59,6 +60,7 @@ def carregar_json_regras():
         with open('classificacao_tributaria.json', 'r', encoding='utf-8') as f:
             dados = json.load(f)
             df = pd.DataFrame(dados)
+            # Normaliza colunas para facilitar busca
             if 'Descrição do Código da Classificação Tributária' in df.columns:
                 df['Busca'] = df['Descrição do Código da Classificação Tributária'].str.lower()
             else: df['Busca'] = ""
@@ -107,20 +109,36 @@ def verificar_seletivo(ncm):
     ncm = str(ncm).replace('.', '')
     return any(ncm.startswith(p) for p in ['2203','2204','2205','2206','2207','2208','24','87','93'])
 
+def buscar_cst_no_json(df_json, c_class_trib):
+    """
+    Função auxiliar que busca o CST (3 dígitos) no JSON usando a cClassTrib como chave.
+    """
+    if df_json.empty: return '901' # Padrão se não houver JSON
+    
+    # Verifica se as colunas existem
+    col_class = 'Código da Classificação Tributária'
+    col_cst = 'Código da Situação Tributária'
+    
+    if col_class not in df_json.columns or col_cst not in df_json.columns:
+        return '901'
+        
+    # Busca
+    match = df_json[df_json[col_class].astype(str) == str(c_class_trib)]
+    if not match.empty:
+        return str(match.iloc[0][col_cst])
+    
+    return '901' # Não achou no JSON
+
 def classificar_item(row, mapa_regras, df_json, df_tipi, aliquota_padrao):
     ncm = str(row['NCM']).replace('.', '')
-    cfop = str(row['CFOP']).replace('.', '')
-    valor_prod = float(row['Valor'])
+    cfop = str(row['CFOP']).replace('.', '') if 'CFOP' in row else '0000'
+    valor_prod = float(row.get('Valor', 0.0))
     
     v_icms = float(row.get('vICMS', 0))
     v_pis = float(row.get('vPIS', 0))
     v_cofins = float(row.get('vCOFINS', 0))
     imposto_atual = v_icms + v_pis + v_cofins
 
-    # Base de cálculo: 
-    # Se for VENDA, subtraímos o imposto por dentro para achar a base líquida.
-    # Se for COMPRA, o crédito é sobre o valor de aquisição (tecnicamente).
-    # Para o simulador, vamos manter a regra de "limpar" o imposto antigo para projetar o novo limpo
     base_liquida = valor_prod - imposto_atual
     if base_liquida < 0: base_liquida = 0 
     
@@ -133,7 +151,7 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliquota_padrao):
         elif ncm[:4] in df_tipi.index: validacao = "✅ Posição Válida"
 
     if verificar_seletivo(ncm):
-        return '000001', f'Produto sujeito a Imposto Seletivo', 'ALERTA SELETIVO', '02', 'Trava', validacao, imposto_atual, imposto_padrao_projetado
+        return '000001', f'Produto sujeito a Imposto Seletivo', 'ALERTA SELETIVO', '402', 'Trava', validacao, imposto_atual, imposto_padrao_projetado
 
     anexo, origem = None, "Regra Geral"
     for tent in [ncm, ncm[:6], ncm[:4], ncm[:2]]:
@@ -142,25 +160,34 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliquota_padrao):
             origem = f"{anexo} (via {tent})"
             break
             
-    # Tratamento de Exportação (Venda) ou Importação (Entrada) - CFOPs
     if cfop.startswith('7') or cfop.startswith('3'): 
-        return '410004', 'Comércio Exterior', 'IMUNE/SUSPENSO', '50', 'CFOP', validacao, 0.0, 0.0
+        return '410004', 'Comércio Exterior', 'IMUNE/SUSPENSO', '301', 'CFOP', validacao, 0.0, 0.0
         
     elif anexo:
         regra = CONFIG_ANEXOS[anexo]
-        fator_reducao = regra.get('Reducao', 0.0) 
+        cClassTrib = regra['cClassTrib']
+        fator_reducao = regra.get('Reducao', 0.0)
         imposto_futuro = imposto_padrao_projetado * (1 - fator_reducao)
-        return regra['cClassTrib'], f"{regra['Descricao']} - {origem}", regra['Status'], regra['CST'], origem, validacao, imposto_atual, imposto_futuro
+        
+        # --- AQUI ESTÁ A CORREÇÃO: BUSCA O CST NO JSON ---
+        cst_correto = buscar_cst_no_json(df_json, cClassTrib)
+        
+        return cClassTrib, f"{regra['Descricao']} - {origem}", regra['Status'], cst_correto, origem, validacao, imposto_atual, imposto_futuro
     
     else:
+        # Fallback (Busca textual no JSON)
         termo = "medicamentos" if ncm.startswith('30') else ("cesta básica" if ncm.startswith('10') else "tributação integral")
         if not df_json.empty and 'Busca' in df_json.columns:
             res = df_json[df_json['Busca'].str.contains(termo, na=False)]
             if not res.empty:
-                return res.iloc[0]['Código da Classificação Tributária'], res.iloc[0]['Descrição do Código da Classificação Tributária'], "SUGESTAO JSON", res.iloc[0].get('Código da Situação Tributária', '01'), origem, validacao, imposto_atual, imposto_padrao_projetado
+                cClassTrib = res.iloc[0]['Código da Classificação Tributária']
+                cst_json = res.iloc[0].get('Código da Situação Tributária', '001')
+                return cClassTrib, res.iloc[0]['Descrição do Código da Classificação Tributária'], "SUGESTAO JSON", cst_json, origem, validacao, imposto_atual, imposto_padrao_projetado
 
-    return '000001', 'Padrão - Tributação Integral', 'PADRAO', '01', origem, validacao, imposto_atual, imposto_padrao_projetado
+    # Padrão: 001 (Tributada Integralmente)
+    return '000001', 'Padrão - Tributação Integral', 'PADRAO', '001', origem, validacao, imposto_atual, imposto_padrao_projetado
 
+# As funções de leitura de XML e SPED continuam iguais...
 def extrair_nome_empresa_xml(tree, ns):
     root = tree.getroot()
     emit = root.find('.//ns:emit', ns)
@@ -171,7 +198,6 @@ def extrair_nome_empresa_xml(tree, ns):
     return "Empresa Desconhecida"
 
 def processar_xml_detalhado(tree, ns, tipo_op='SAIDA'):
-    """Extrai dados do XML. Se tipo_op for 'ENTRADA', podemos ajustar campos específicos se necessário."""
     lista = []
     root = tree.getroot()
     infNFe = root.find('.//ns:infNFe', ns)
@@ -217,7 +243,6 @@ def processar_sped_fiscal(arquivo):
         if not linha.startswith('|'): continue
         campos = linha.split('|')
         registro = campos[1]
-        
         if registro == '0000':
             if len(campos) > 6: nome_empresa = campos[6]
         elif registro == '0200':
