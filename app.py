@@ -24,41 +24,56 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 st.title("Sistema de Auditoria Fiscal Inteligente")
-st.caption("Versão com Trava de Segurança (Anti-Erro em Bebidas e Cigarros)")
+st.caption("Versão 8.0: Filtros de Capítulos e Ajuste de Nomenclatura")
 st.divider()
 
-# --- 2. CONFIGURAÇÃO DOS ANEXOS ---
+# --- 2. CONFIGURAÇÃO DOS ANEXOS (COM FILTROS) ---
+# Aqui você me ajuda! Definimos quais capítulos (2 primeiros dígitos do NCM)
+# são aceitáveis para cada anexo. Isso evita que Queijo (04) caia em Higiene.
 CONFIG_ANEXOS = {
-    "ANEXO I": {"Descricao": "Cesta Básica (Aliq. Zero)", "cClassTrib": "200003", "CST": "40", "Status": "ZERO (Anexo I)"},
-    "ANEXO II": {"Descricao": "Medicamentos (Red. 60%)", "cClassTrib": "200009", "CST": "20", "Status": "REDUZIDA 60% (Anexo II)"},
-    "ANEXO III": {"Descricao": "Disp. Médicos (Red. 60%)", "cClassTrib": "200005", "CST": "20", "Status": "REDUZIDA 60% (Anexo III)"},
-    "ANEXO IV": {"Descricao": "Higiene Pessoal (Red. 60%)", "cClassTrib": "200035", "CST": "20", "Status": "REDUZIDA 60% (Anexo IV)"}
+    "ANEXO I": {
+        "Descricao": "Cesta Básica Nacional (Alíquota Zero)",
+        "cClassTrib": "200003", 
+        "CST": "40", 
+        "Status": "ZERO (Anexo I)",
+        # Aceita quase tudo de comida, mas bloqueia coisas estranhas
+        "Capitulos_Permitidos": ["02", "03", "04", "07", "08", "09", "10", "11", "12", "15", "16", "17", "18", "19", "20", "21", "23", "25", "30", "33"]
+    },
+    "ANEXO II": {
+        "Descricao": "Medicamentos (Redução 60%)",
+        "cClassTrib": "200009", 
+        "CST": "20", 
+        "Status": "REDUZIDA 60% (Anexo II)",
+        "Capitulos_Permitidos": ["30"] # Só aceita capítulo 30
+    },
+    "ANEXO III": {
+        "Descricao": "Dispositivos Médicos (Redução 60%)",
+        "cClassTrib": "200005", 
+        "CST": "20", 
+        "Status": "REDUZIDA 60% (Anexo III)",
+        "Capitulos_Permitidos": ["30", "90", "94"] # Médicos e equipamentos
+    },
+    "ANEXO IV": {
+        "Descricao": "Produtos de Higiene (Redução 60%)",
+        "cClassTrib": "200035", 
+        "CST": "20", 
+        "Status": "REDUZIDA 60% (Anexo IV)",
+        "Capitulos_Permitidos": ["33", "34", "96"] # Só aceita Cosméticos, Sabões e Higiene
+    }
 }
 
-# --- 3. TRAVA DE SEGURANÇA (NOVIDADE) ---
-def validar_coerencia_ncm(ncm, anexo_sugerido):
+# --- 3. TRAVAS DE SEGURANÇA (IMPOSTO SELETIVO) ---
+def verificar_imposto_seletivo(ncm):
     """
-    Impede que NCMs de Imposto Seletivo caiam em regras de benefício por erro de leitura.
-    Retorna True se for seguro, False se for incoerente.
+    Retorna True se for um produto perigoso (Bebida, Cigarro, Veículo, Arma).
     """
     ncm = str(ncm).replace('.', '')
-    
-    # Capítulos proibidos em Cesta Básica ou Higiene
-    capitulos_proibidos = [
-        '22', # Bebidas Alcoólicas
-        '24', # Tabaco / Cigarro
-        '93', # Armas e Munições
-        '87'  # Veículos (Geralmente não são higiene/cesta básica)
-    ]
-    
-    # Se o NCM começa com algum proibido, bloqueia o benefício
-    if any(ncm.startswith(cap) for cap in capitulos_proibidos):
-        return False
-        
-    return True
+    proibidos = ['22', '24', '87', '93'] # Bebidas, Fumo, Veículos, Armas
+    if any(ncm.startswith(p) for p in proibidos):
+        return True
+    return False
 
-# --- 4. CARREGAMENTO DE DADOS ---
-
+# --- 4. LEITURA ONLINE INTELIGENTE ---
 @st.cache_data
 def carregar_regras():
     try:
@@ -77,68 +92,74 @@ def mapear_anexos_online():
     mapa_ncm_anexo = {}
     
     try:
-        response = requests.get(url, headers=headers, timeout=15)
+        response = requests.get(url, headers=headers, timeout=20)
         soup = BeautifulSoup(response.content, 'html.parser')
         for s in soup(["script", "style"]): s.extract()
         texto = soup.get_text(separator=' ').replace('\n', ' ')
         texto = re.sub(r'\s+', ' ', texto)
         
-        # Procura os Anexos
+        # Encontra posições dos Anexos
         anexos_pos = []
         for anexo in CONFIG_ANEXOS.keys():
             pos = texto.upper().find(anexo)
             if pos != -1: anexos_pos.append((pos, anexo))
         anexos_pos.sort()
         
-        # Adiciona um "Fim de Curso" para parar de ler se achar palavras perigosas
-        # Isso ajuda o robô a saber que o Anexo IV acabou
-        pos_imposto_seletivo = texto.upper().find("IMPOSTO SELETIVO")
-        if pos_imposto_seletivo != -1:
-            anexos_pos.append((pos_imposto_seletivo, "FIM_ANEXOS"))
-        anexos_pos.sort()
+        # Define um ponto de parada para não ler lixo no final
+        pos_fim = texto.upper().find("IMPOSTO SELETIVO")
+        if pos_fim == -1: pos_fim = len(texto)
 
         for i in range(len(anexos_pos)):
-            nome = anexos_pos[i][1]
-            if nome == "FIM_ANEXOS": continue # Não mapeia o resto
-            
+            nome_anexo = anexos_pos[i][1]
             inicio = anexos_pos[i][0]
-            fim = anexos_pos[i+1][0] if i+1 < len(anexos_pos) else len(texto)
+            
+            # O fim é o começo do próximo anexo ou o ponto de parada
+            if i + 1 < len(anexos_pos):
+                fim = anexos_pos[i+1][0]
+            else:
+                fim = pos_fim
             
             bloco = texto[inicio:fim].replace('.', '')
+            
+            # Extrai NCMs e Capítulos
             ncms = re.findall(r'\b\d{8}\b', bloco)
             caps = re.findall(r'\b\d{4}\b', bloco)
             
-            for n in ncms: mapa_ncm_anexo[n] = nome
+            # --- FILTRAGEM DE CAPÍTULOS (AQUI EVITA O QUEIJO NO ANEXO IV) ---
+            capitulos_aceitos = CONFIG_ANEXOS[nome_anexo]["Capitulos_Permitidos"]
+            
+            for n in ncms:
+                # Só adiciona se o NCM começar com os capítulos permitidos daquele anexo
+                if any(n.startswith(c) for c in capitulos_aceitos):
+                    mapa_ncm_anexo[n] = nome_anexo
+                    
             for c in caps: 
-                if c not in mapa_ncm_anexo: mapa_ncm_anexo[c] = nome
+                if c not in mapa_ncm_anexo: 
+                    if any(c.startswith(cap_ok) for cap_ok in capitulos_aceitos):
+                        mapa_ncm_anexo[c] = nome_anexo
                     
         return mapa_ncm_anexo
     except: return {}
 
-# --- 5. CLASSIFICAÇÃO COM TRAVA ---
+# --- 5. CLASSIFICAÇÃO CENTRAL ---
 
 def classificar_item_master(ncm, cfop, produto, df_regras, mapa_anexos):
     ncm_limpo = str(ncm).replace('.', '')
     cfop_limpo = str(cfop).replace('.', '')
     
-    # Padrão
     cClassTrib, desc, cst, status, origem = '000001', 'Padrão - Tributação Integral', '01', 'PADRAO', 'Regra Geral'
     
-    # 1. Busca no Mapa da Lei
+    # 1. VERIFICA SE É IMPOSTO SELETIVO (Prioridade Máxima de Alerta)
+    if verificar_imposto_seletivo(ncm_limpo):
+        # Texto exato solicitado
+        return '000001', 'Produto sujeito a Imposto Seletivo', 'ALERTA SELETIVO', '02', 'Trava de Segurança'
+
+    # 2. VERIFICA NOS ANEXOS DA LEI
     anexo_encontrado = None
     if ncm_limpo in mapa_anexos: anexo_encontrado = mapa_anexos[ncm_limpo]
     elif ncm_limpo[:4] in mapa_anexos: anexo_encontrado = mapa_anexos[ncm_limpo[:4]]
     
-    # --- AQUI ENTRA A TRAVA DE SEGURANÇA ---
-    # Se achou anexo, mas é cigarro (24) ou bebida (22), ANULA o anexo.
-    if anexo_encontrado:
-        if not validar_coerencia_ncm(ncm_limpo, anexo_encontrado):
-            anexo_encontrado = None # Cancela o benefício
-            origem = "Bloqueado por Trava de Segurança (NCM Incompatível)"
-            status = "ALERTA - IMPOSTO SELETIVO"
-            cst = "02" # Tributação Monofásica/Seletiva
-
-    # 2. Aplica Regras
+    # 3. APLICA REGRA (Se não for exportação)
     if cfop_limpo.startswith('7'):
         return '410004', 'Exportação', 'IMUNE', '50', 'Não'
         
@@ -146,19 +167,11 @@ def classificar_item_master(ncm, cfop, produto, df_regras, mapa_anexos):
         regra = CONFIG_ANEXOS[anexo_encontrado]
         return regra['cClassTrib'], f"{regra['Descricao']} (Via {anexo_encontrado})", regra['Status'], regra['CST'], anexo_encontrado
     
-    # 3. Fallback JSON (Se não caiu na lei ou foi bloqueado)
+    # 4. FALLBACK JSON (Se não achou na lei)
     else:
-        # Se foi bloqueado antes, mantém o status de alerta
-        if status == "ALERTA - IMPOSTO SELETIVO":
-            return '000001', 'Produto sujeito a Imposto Seletivo/Majorado', status, cst, origem
-
-        # Busca normal
         termo_busca = ""
         if ncm_limpo.startswith('30'): termo_busca = "medicamentos"
         elif ncm_limpo.startswith('1006'): termo_busca = "cesta básica"
-        elif ncm_limpo.startswith('2203') or ncm_limpo.startswith('2402'): # Reforço manual
-            termo_busca = "bebidas" # Força padrão ou regra específica
-            return '000001', 'Tributação Integral (Bebida/Fumo)', 'PADRAO', '02', 'Regra NCM'
         else: termo_busca = "tributação integral"
         
         if not df_regras.empty:
@@ -174,9 +187,9 @@ df_regras = carregar_regras()
 with st.sidebar:
     st.subheader("Painel de Controle")
     uploaded_files = st.file_uploader("Carregar XMLs", type=['xml'], accept_multiple_files=True)
-    with st.spinner("Lendo Lei..."):
+    with st.spinner("Atualizando Lei..."):
         mapa_anexos = mapear_anexos_online()
-    if mapa_anexos: st.success(f"🟢 Lei Mapeada ({len(mapa_anexos)} itens)")
+    if mapa_anexos: st.success(f"🟢 Lei Mapeada ({len(mapa_anexos)} regras)")
 
 if uploaded_files:
     if df_regras.empty: st.warning("Sem JSON de regras.")
@@ -188,8 +201,7 @@ if uploaded_files:
         try:
             tree = ET.parse(arquivo)
             root = tree.getroot()
-            infNFe = root.find('.//ns:infNFe', ns)
-            chave = infNFe.attrib.get('Id', '')[3:] if infNFe else ''
+            chave = root.find('.//ns:infNFe', ns).attrib.get('Id', '')[3:]
             for item in root.findall('.//ns:det', ns):
                 prod = item.find('ns:prod', ns)
                 lista_produtos.append({
@@ -214,14 +226,11 @@ if uploaded_files:
         df_analise[['cClassTrib', 'Descrição', 'Status', 'CST', 'Origem Legal']] = resultados
         
         st.markdown("### 📊 Auditoria Fiscal")
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Produtos", len(df_analise))
-        col2.metric("Encontrados na Lei", len(df_analise[df_analise['Origem Legal'].str.contains("ANEXO")]))
-        # Mostra se houve bloqueios
-        bloqueios = len(df_analise[df_analise['Status'].str.contains("ALERTA")])
-        col3.metric("Correções de Segurança", bloqueios, delta="Bloqueios de IS" if bloqueios > 0 else None, delta_color="inverse")
+        col1, col2 = st.columns(2)
+        col1.metric("Produtos Analisados", len(df_analise))
+        col2.metric("Itens de Imposto Seletivo", len(df_analise[df_analise['Status'] == 'ALERTA SELETIVO']), delta_color="inverse")
         
-        tab1, tab2 = st.tabs(["Geral", "Destaques Lei"])
+        tab1, tab2 = st.tabs(["Auditoria Completa", "Itens Lei"])
         with tab1: st.dataframe(df_analise, use_container_width=True)
         with tab2: st.dataframe(df_analise[df_analise['Origem Legal'].str.contains("ANEXO")], use_container_width=True)
         
@@ -229,4 +238,4 @@ if uploaded_files:
         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
             df_analise.to_excel(writer, index=False, sheet_name='Resultado')
         
-        st.download_button("📥 Baixar Excel (.xlsx)", buffer, "Auditoria.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary")
+        st.download_button("📥 Baixar Excel (.xlsx)", buffer, "Auditoria_Fiscal.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary")
