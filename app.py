@@ -9,7 +9,7 @@ st.set_page_config(
     page_title="cClass Auditor AI",
     page_icon="🟧",
     layout="wide",
-    initial_sidebar_state="collapsed" # Barra lateral começa fechada para dar foco ao centro
+    initial_sidebar_state="collapsed"
 )
 
 # --- ESTADO (SESSION STATE) ---
@@ -25,18 +25,15 @@ def reset_all():
     st.session_state.estoque_df = pd.DataFrame()
     st.session_state.empresa_nome = "Nenhuma Empresa"
     st.session_state.uploader_key += 1
-    # st.rerun() # O rerun acontece pelo botão
 
-# --- CSS PROFISSIONAL (CENTRALIZADO) ---
+# --- CSS PROFISSIONAL ---
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-    
-    /* GERAL */
     .stApp { background-color: #F8F9FA; }
     html, body, [class*="css"] { font-family: 'Inter', sans-serif; color: #2C3E50; }
     
-    /* BARRA LATERAL (Clean) */
+    /* SIDEBAR */
     section[data-testid="stSidebar"] { background-color: #FFFFFF !important; border-right: 1px solid #E0E0E0; }
     section[data-testid="stSidebar"] * { color: #2C3E50 !important; }
     
@@ -48,29 +45,11 @@ st.markdown("""
         font-weight: bold; font-size: 1rem; display: block; margin: 0 auto 20px auto; width: fit-content;
     }
 
-    /* ÁREA DE UPLOAD (CARDS CENTRAIS) */
-    .upload-card {
-        background-color: white;
-        padding: 20px;
-        border-radius: 10px;
-        border: 1px solid #E0E0E0;
-        box-shadow: 0 4px 10px rgba(0,0,0,0.05);
-        text-align: center;
-        height: 100%;
-    }
-    .upload-title {
-        font-weight: 700;
-        color: #2C3E50;
-        margin-bottom: 10px;
-        font-size: 1.1rem;
-    }
-    .upload-desc {
-        font-size: 0.85rem;
-        color: #7F8C8D;
-        margin-bottom: 15px;
-    }
+    /* UPLOAD CARDS */
+    .upload-title { font-weight: 700; color: #2C3E50; margin-bottom: 5px; font-size: 1.1rem; }
+    .upload-desc { font-size: 0.85rem; color: #7F8C8D; margin-bottom: 10px; }
 
-    /* DASHBOARD METRICS */
+    /* METRICS */
     div[data-testid="stMetric"] { 
         background-color: #FFFFFF !important; border: 1px solid #E0E0E0; border-radius: 12px; 
         padding: 15px; border-left: 6px solid #E67E22; 
@@ -81,14 +60,6 @@ st.markdown("""
     /* BOTÕES */
     div.stButton > button[kind="primary"] { background-color: #E67E22 !important; color: white !important; width: 100%; }
     div.stButton > button[kind="secondary"] { background-color: #ECF0F1 !important; color: #2C3E50 !important; width: 100%; border: 1px solid #BDC3C7 !important;}
-    
-    /* RADIO BUTTON CUSTOMIZADO */
-    div[role="radiogroup"] {
-        display: flex;
-        justify-content: center;
-        gap: 20px;
-        margin-bottom: 20px;
-    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -101,7 +72,7 @@ def carregar_bases():
 def carregar_tipi_cache(file):
     return motor.carregar_tipi(file)
 
-# --- BARRA LATERAL (APENAS PARAMETROS) ---
+# --- BARRA LATERAL ---
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/3029/3029337.png", width=50)
     st.markdown("### ⚙️ Configurações")
@@ -119,52 +90,35 @@ with st.sidebar:
         reset_all()
         st.rerun()
 
-    # Carregamento silencioso
     mapa_lei, df_regras_json = carregar_bases()
     df_tipi = carregar_tipi_cache(uploaded_tipi)
 
 # --- CORPO PRINCIPAL ---
-
-# 1. Cabeçalho
 st.markdown('<div class="main-header">cClass Auditor AI</div>', unsafe_allow_html=True)
 if st.session_state.empresa_nome != "Nenhuma Empresa":
     st.markdown(f'<div class="company-badge">🏢 {st.session_state.empresa_nome}</div>', unsafe_allow_html=True)
 else:
-    st.markdown('<div class="sub-header">Selecione o método de importação abaixo para iniciar</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sub-header">Auditoria Fiscal e Planejamento Tributário</div>', unsafe_allow_html=True)
 
-# 2. Seletor de Modo (Exclusividade)
-modo_selecionado = st.radio(
-    "Escolha a Origem dos Dados:",
-    ["📄 XML (Notas Fiscais)", "📝 SPED Fiscal (TXT)"],
-    horizontal=True,
-    label_visibility="collapsed"
-)
-
-# 3. Áreas de Upload (Condicionais)
+modo_selecionado = st.radio("Origem dos Dados:", ["📄 XML (Notas Fiscais)", "📝 SPED Fiscal (TXT)"], horizontal=True, label_visibility="collapsed")
 st.markdown("---")
 
 ns = {'ns': 'http://www.portalfiscal.inf.br/nfe'}
 
-# === MODO XML ===
+# === UPLOADS ===
 if modo_selecionado == "📄 XML (Notas Fiscais)":
-    # Se mudar de modo, limpa o SPED da memória para não misturar
     if not st.session_state.estoque_df.empty: 
         st.session_state.estoque_df = pd.DataFrame()
-        st.toast("Modo alterado: Dados do SPED foram limpos.", icon="🔄")
+        st.toast("Modo XML ativado. SPED limpo.", icon="🔄")
 
     c_venda, c_compra = st.columns(2)
-    
     with c_venda:
         st.markdown('<div class="upload-title">📤 VENDAS (Saídas)</div>', unsafe_allow_html=True)
-        st.markdown('<div class="upload-desc">Arraste os XMLs de emissão própria.<br><b>Gera Auditoria de Débitos.</b></div>', unsafe_allow_html=True)
         vendas_files = st.file_uploader("Upload Vendas", type=['xml'], accept_multiple_files=True, key=f"v_{st.session_state.uploader_key}", label_visibility="collapsed")
-        
     with c_compra:
         st.markdown('<div class="upload-title">📥 COMPRAS (Entradas)</div>', unsafe_allow_html=True)
-        st.markdown('<div class="upload-desc">Arraste os XMLs de fornecedores.<br><b>Ativa Simulação de Créditos.</b></div>', unsafe_allow_html=True)
         compras_files = st.file_uploader("Upload Compras", type=['xml'], accept_multiple_files=True, key=f"c_{st.session_state.uploader_key}", label_visibility="collapsed")
 
-    # Processamento XML
     def processar_arquivos(arquivos, tipo):
         lista = []
         for arquivo in arquivos:
@@ -186,128 +140,146 @@ if modo_selecionado == "📄 XML (Notas Fiscais)":
             st.session_state.compras_df = pd.DataFrame(processar_arquivos(compras_files, 'ENTRADA'))
             st.rerun()
 
-# === MODO SPED ===
 else:
-    # Se mudar de modo, limpa os XMLs da memória
     if not st.session_state.vendas_df.empty or not st.session_state.compras_df.empty:
         st.session_state.vendas_df = pd.DataFrame()
         st.session_state.compras_df = pd.DataFrame()
-        st.toast("Modo alterado: Dados de XML foram limpos.", icon="🔄")
+        st.toast("Modo SPED ativado. XMLs limpos.", icon="🔄")
 
-    st.markdown('<div class="upload-title">📝 ARQUIVO SPED FISCAL</div>', unsafe_allow_html=True)
-    st.markdown('<div class="upload-desc" style="text-align:center;">Carregue o arquivo TXT integral.<br><b>Auditoria Completa de Cadastro (0200).</b></div>', unsafe_allow_html=True)
-    
-    col_sped_centrada = st.columns([1, 2, 1])
-    with col_sped_centrada[1]:
+    st.markdown('<div class="upload-title" style="text-align:center;">📝 ARQUIVO SPED FISCAL</div>', unsafe_allow_html=True)
+    col_sped = st.columns([1, 2, 1])
+    with col_sped[1]:
         sped_file = st.file_uploader("Upload SPED", type=['txt'], accept_multiple_files=False, key=f"s_{st.session_state.uploader_key}", label_visibility="collapsed")
 
     if sped_file and st.session_state.estoque_df.empty:
-        with st.spinner("Lendo SPED Fiscal..."):
+        with st.spinner("Lendo SPED..."):
             nome, itens = motor.processar_sped_fiscal(sped_file)
             st.session_state.empresa_nome = nome
             st.session_state.estoque_df = pd.DataFrame(itens)
             st.rerun()
 
-
-# --- MOTOR DE AUDITORIA (COMUM) ---
+# --- MOTOR DE AUDITORIA ---
 def auditar_df(df, aliquota):
     if df.empty: return df
     res = df.apply(
         lambda row: motor.classificar_item(row, mapa_lei, df_regras_json, df_tipi, aliquota), 
         axis=1, result_type='expand'
     )
-    df[['cClassTrib', 'Descrição', 'Status', 'Novo CST', 'Origem Legal', 'Validação TIPI', 'Carga Atual', 'Carga Projetada']] = res
+    df[['cClassTrib', 'DescRegra', 'Status', 'Novo CST', 'Origem Legal', 'Validação TIPI', 'Carga Atual', 'Carga Projetada']] = res
     return df
 
-# Audita o que tiver na memória
 df_vendas_aud = auditar_df(st.session_state.vendas_df.copy(), aliquota_input/100)
 df_compras_aud = auditar_df(st.session_state.compras_df.copy(), aliquota_input/100)
 df_estoque_aud = auditar_df(st.session_state.estoque_df.copy(), aliquota_input/100)
 
-# --- VISUALIZAÇÃO DE RESULTADOS ---
+# --- VISUALIZAÇÃO ---
 tem_dados = not df_vendas_aud.empty or not df_compras_aud.empty or not df_estoque_aud.empty
 
 if tem_dados:
-    st.markdown("---")
-    st.markdown("### 📊 Resultado da Análise")
+    # Definição das Colunas conforme solicitado
+    cols_ordenadas = [
+        'Cód. Produto', 'Descrição Produto', 'NCM', 'CFOP', 'Novo CST', 'cClassTrib', 
+        'DescRegra', 'Origem Legal', 'Valor', 'vICMS', 'vPIS', 'vCOFINS', 
+        'Carga Atual', 'Carga Projetada', 'Validação TIPI'
+    ]
+    
+    # Prepara DF para exibição (Renomeando 'Produto' para 'Descrição Produto' para bater com seu pedido)
+    def preparar_exibicao(df):
+        if df.empty: return df
+        df_view = df.rename(columns={'Produto': 'Descrição Produto'})
+        # Garante que as colunas existem (vICMS etc vem do motor)
+        return df_view[cols_ordenadas]
 
-    # Configuração Visual das Tabelas
+    # --- ABAS ---
+    tabs = st.tabs(["📊 Resumo Executivo", "📤 Saídas (Vendas)", "📥 Entradas (Compras)", "📂 Arquivos Processados"])
+
+    # 1. ABA RESUMO (DASHBOARD)
+    with tabs[0]:
+        st.markdown("### Visão Geral da Apuração")
+        
+        # Totais
+        debito = df_vendas_aud['Carga Projetada'].sum() if not df_vendas_aud.empty else 0
+        credito = df_compras_aud['Carga Projetada'].sum() if not df_compras_aud.empty else 0
+        saldo = debito - credito
+        
+        # Métricas
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Débitos (Saídas)", f"R$ {debito:,.2f}", delta="Passivo", delta_color="inverse")
+        st.markdown("""<style>div[data-testid="metric-container"]:nth-child(2) {border-left: 6px solid #27AE60 !important;}</style>""", unsafe_allow_html=True)
+        c2.metric("Créditos (Entradas)", f"R$ {credito:,.2f}", delta="Ativo", delta_color="normal")
+        c3.metric("Saldo Estimado", f"R$ {abs(saldo):,.2f}", delta="Pagar" if saldo > 0 else "Credor", delta_color="inverse")
+        
+        # Auditoria (Erros)
+        total_erros = 0
+        if not df_vendas_aud.empty: total_erros += len(df_vendas_aud[df_vendas_aud['Validação TIPI'].str.contains("Ausente")])
+        c4.metric("Alertas TIPI", total_erros, delta="Atenção" if total_erros > 0 else "OK", delta_color="inverse")
+        
+        st.divider()
+        g1, g2 = st.columns(2)
+        with g1:
+            st.markdown("#### Distribuição da Carga (Saídas)")
+            if not df_vendas_aud.empty:
+                st.bar_chart(df_vendas_aud['Status'].value_counts(), color="#E67E22")
+            else: st.info("Sem dados de saída.")
+            
+        with g2:
+            st.markdown("#### Impacto por Classificação")
+            if not df_vendas_aud.empty:
+                resumo_impacto = df_vendas_aud.groupby('Status')[['Carga Atual', 'Carga Projetada']].sum()
+                st.bar_chart(resumo_impacto)
+
+    # Configuração de Colunas para as Tabelas
     col_config = {
         "Valor": st.column_config.NumberColumn(format="R$ %.2f"),
+        "vICMS": st.column_config.NumberColumn(format="R$ %.2f"),
+        "vPIS": st.column_config.NumberColumn(format="R$ %.2f"),
+        "vCOFINS": st.column_config.NumberColumn(format="R$ %.2f"),
         "Carga Atual": st.column_config.NumberColumn(format="R$ %.2f"),
         "Carga Projetada": st.column_config.NumberColumn(format="R$ %.2f"),
-        "Status": st.column_config.TextColumn("Regra Aplicada", width="medium"),
         "Novo CST": st.column_config.TextColumn("Novo CST", width="small"),
-        "cClassTrib": st.column_config.TextColumn("Class. Trib.", width="medium"),
-        "Validação TIPI": st.column_config.TextColumn("TIPI", width="small")
+        "DescRegra": st.column_config.TextColumn("Regra Fiscal", width="large"),
+        "Validação TIPI": st.column_config.TextColumn("TIPI", width="small"),
     }
 
-    # === VISÃO SPED ===
-    if modo_selecionado == "📝 SPED Fiscal (TXT)":
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Itens Cadastrados", len(df_estoque_aud))
-        c2.metric("Itens com Benefício", len(df_estoque_aud[df_estoque_aud['Origem Legal'].str.contains("Anexo")]))
-        
-        erros = len(df_estoque_aud[df_estoque_aud['Validação TIPI'].str.contains("Ausente")])
-        c3.metric("Erros NCM (TIPI)", erros, delta="Corrigir" if erros > 0 else "OK", delta_color="inverse")
-        
-        st.dataframe(df_estoque_aud, use_container_width=True, hide_index=True, column_config=col_config)
-        
-        # Download SPED
-        buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-            df_estoque_aud.to_excel(writer, index=False, sheet_name="Auditoria_SPED")
-        st.download_button("📥 BAIXAR RELATÓRIO SPED", buffer, "Auditoria_SPED.xlsx", "primary", use_container_width=True)
+    # 2. ABA VENDAS
+    with tabs[1]:
+        if not df_vendas_aud.empty:
+            df_view_v = preparar_exibicao(df_vendas_aud)
+            st.dataframe(df_view_v, use_container_width=True, hide_index=True, column_config=col_config)
+        else: st.info("Nenhuma venda carregada.")
 
-    # === VISÃO XML (Vendas e/ou Compras) ===
-    else:
-        # Só exibe painel de apuração se tiver VENDAS e COMPRAS
-        if not df_vendas_aud.empty and not df_compras_aud.empty:
-            debito = df_vendas_aud['Carga Projetada'].sum()
-            credito = df_compras_aud['Carga Projetada'].sum()
-            saldo = debito - credito
-            
-            k1, k2, k3, k4 = st.columns(4)
-            k1.metric("Débitos (Saídas)", f"R$ {debito:,.2f}", delta="IBS/CBS Devido", delta_color="inverse")
-            st.markdown("""<style>div[data-testid="metric-container"]:nth-child(2) {border-left: 6px solid #27AE60 !important;}</style>""", unsafe_allow_html=True)
-            k2.metric("Créditos (Entradas)", f"R$ {credito:,.2f}", delta="Recuperável", delta_color="normal")
-            k3.metric("Saldo a Pagar", f"R$ {abs(saldo):,.2f}", delta="Pagar" if saldo > 0 else "Credor", delta_color="inverse")
-            
-            base = df_vendas_aud['Valor'].sum()
-            aliq_efetiva = (saldo / base * 100) if base > 0 else 0
-            k4.metric("Alíquota Efetiva", f"{aliq_efetiva:.2f}%")
-        
-        elif not df_vendas_aud.empty:
-            # Só Vendas carregadas
-            debito = df_vendas_aud['Carga Projetada'].sum()
-            k1, k2 = st.columns(2)
-            k1.metric("Total Auditado (vProd)", f"R$ {df_vendas_aud['Valor'].sum():,.2f}")
-            k2.metric("Débitos Projetados", f"R$ {debito:,.2f}")
-            st.info("💡 DICA: Carregue os XMLs de Entrada (lado direito) para ver o cálculo da Não-Cumulatividade (Créditos).")
+    # 3. ABA COMPRAS
+    with tabs[2]:
+        if not df_compras_aud.empty:
+            df_view_c = preparar_exibicao(df_compras_aud)
+            st.dataframe(df_view_c, use_container_width=True, hide_index=True, column_config=col_config)
+        else: st.info("Nenhuma compra carregada.")
 
-        # Abas
-        tab_v, tab_c = st.tabs(["📤 Saídas (Vendas)", "📥 Entradas (Compras)"])
-        with tab_v:
+    # 4. ABA ARQUIVOS (Chaves NFe)
+    with tabs[3]:
+        c_arq1, c_arq2 = st.columns(2)
+        with c_arq1:
+            st.markdown("#### 📄 Arquivos de Saída")
             if not df_vendas_aud.empty:
-                st.dataframe(df_vendas_aud, use_container_width=True, hide_index=True, column_config=col_config)
-            else: st.warning("Aguardando XMLs de Venda...")
-            
-        with tab_c:
+                st.dataframe(df_vendas_aud[['Chave NFe']].drop_duplicates(), use_container_width=True, hide_index=True)
+        with c_arq2:
+            st.markdown("#### 📄 Arquivos de Entrada")
             if not df_compras_aud.empty:
-                st.dataframe(df_compras_aud, use_container_width=True, hide_index=True, column_config=col_config)
-            else: 
-                if modo_selecionado == "📄 XML (Notas Fiscais)":
-                    st.info("Nenhum XML de compra carregado. A simulação considera apenas os débitos.")
+                st.dataframe(df_compras_aud[['Chave NFe']].drop_duplicates(), use_container_width=True, hide_index=True)
 
-        # Download XML
-        if not df_vendas_aud.empty or not df_compras_aud.empty:
-            buffer = io.BytesIO()
-            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                if not df_vendas_aud.empty: df_vendas_aud.to_excel(writer, index=False, sheet_name="Vendas")
-                if not df_compras_aud.empty: df_compras_aud.to_excel(writer, index=False, sheet_name="Compras")
-            st.download_button("📥 BAIXAR RELATÓRIO XML", buffer, "Auditoria_XML.xlsx", "primary", use_container_width=True)
+    # DOWNLOAD GLOBAL
+    st.markdown("---")
+    st.markdown("### 📥 Exportar Laudo")
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+        if not df_vendas_aud.empty: 
+            preparar_exibicao(df_vendas_aud).to_excel(writer, index=False, sheet_name="Auditoria_Vendas")
+        if not df_compras_aud.empty: 
+            preparar_exibicao(df_compras_aud).to_excel(writer, index=False, sheet_name="Auditoria_Compras")
+        if not df_estoque_aud.empty: 
+            df_estoque_aud.to_excel(writer, index=False, sheet_name="Auditoria_SPED")
+            
+    st.download_button("BAIXAR RELATÓRIO COMPLETO (.XLSX)", buffer, "Laudo_Auditoria_Nascel.xlsx", "primary", use_container_width=True)
 
 else:
-    # Estado vazio (Hero)
-    st.markdown("<br><br>", unsafe_allow_html=True)
-    st.info("👈 Utilize os botões acima para carregar seus arquivos.")
+    st.info("👈 Aguardando arquivos...")
