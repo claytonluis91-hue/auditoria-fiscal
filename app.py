@@ -55,10 +55,6 @@ st.markdown("""
 
     /* Sidebar */
     section[data-testid="stSidebar"] {background-color: #F4F6F7; border-right: 1px solid #CFD8DC;}
-    
-    /* Classes Específicas para Cores de Variação */
-    .impacto-positivo {color: #27AE60 !important;} /* Verde (Redução de Imposto) */
-    .impacto-negativo {color: #C0392B !important;} /* Vermelho (Aumento de Imposto) */
     </style>
     """, unsafe_allow_html=True)
 
@@ -178,20 +174,32 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliquota_padrao):
     cfop = str(row['CFOP']).replace('.', '')
     valor_prod = float(row['Valor'])
     
+    # Extração dos impostos "por dentro" atuais
+    v_icms = float(row.get('vICMS', 0))
+    v_pis = float(row.get('vPIS', 0))
+    v_cofins = float(row.get('vCOFINS', 0))
+    
+    # Carga Atual Total
+    imposto_atual = v_icms + v_pis + v_cofins
+
+    # --- NOVA LÓGICA DE PROJEÇÃO ---
+    # 1. Encontra a Base Líquida (Valor do Produto sem os impostos atuais)
+    # Ex: Se vProd é 100 e tem 18 de ICMS, a mercadoria vale 82.
+    # O IBS incide sobre esses 82 (teoricamente, "por fora")
+    base_liquida = valor_prod - imposto_atual
+    if base_liquida < 0: base_liquida = 0 # Segurança
+    
+    # 2. Calcula o IBS/CBS Cheio sobre a Base Líquida
+    imposto_padrao_projetado = base_liquida * aliquota_padrao
+    imposto_futuro = imposto_padrao_projetado
+
     validacao = "⚠️ NCM Ausente (TIPI)"
     if not df_tipi.empty:
         if ncm in df_tipi.index: validacao = "✅ NCM Válido"
         elif ncm[:4] in df_tipi.index: validacao = "✅ Posição Válida"
 
-    # Cálculo da Carga Atual (Lida do XML)
-    imposto_atual = float(row.get('vICMS', 0)) + float(row.get('vPIS', 0)) + float(row.get('vCOFINS', 0))
-
-    # Cálculo do Futuro (IBS/CBS)
-    imposto_padrao = valor_prod * aliquota_padrao
-    imposto_futuro = imposto_padrao 
-
     if verificar_seletivo(ncm):
-        return '000001', f'Produto sujeito a Imposto Seletivo', 'ALERTA SELETIVO', '02', 'Trava', validacao, imposto_atual, imposto_padrao
+        return '000001', f'Produto sujeito a Imposto Seletivo', 'ALERTA SELETIVO', '02', 'Trava', validacao, imposto_atual, imposto_padrao_projetado
 
     anexo, origem = None, "Regra Geral"
     for tent in [ncm, ncm[:6], ncm[:4], ncm[:2]]:
@@ -206,7 +214,8 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliquota_padrao):
     elif anexo:
         regra = CONFIG_ANEXOS[anexo]
         fator_reducao = regra.get('Reducao', 0.0) 
-        imposto_futuro = imposto_padrao * (1 - fator_reducao)
+        # Aplica a redução sobre o imposto projetado da base líquida
+        imposto_futuro = imposto_padrao_projetado * (1 - fator_reducao)
         return regra['cClassTrib'], f"{regra['Descricao']} - {origem}", regra['Status'], regra['CST'], origem, validacao, imposto_atual, imposto_futuro
     
     else:
@@ -214,9 +223,9 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliquota_padrao):
         if not df_json.empty and 'Busca' in df_json.columns:
             res = df_json[df_json['Busca'].str.contains(termo, na=False)]
             if not res.empty:
-                return res.iloc[0]['Código da Classificação Tributária'], res.iloc[0]['Descrição do Código da Classificação Tributária'], "SUGESTAO JSON", res.iloc[0].get('Código da Situação Tributária', '01'), origem, validacao, imposto_atual, imposto_padrao
+                return res.iloc[0]['Código da Classificação Tributária'], res.iloc[0]['Descrição do Código da Classificação Tributária'], "SUGESTAO JSON", res.iloc[0].get('Código da Situação Tributária', '01'), origem, validacao, imposto_atual, imposto_padrao_projetado
 
-    return '000001', 'Padrão - Tributação Integral', 'PADRAO', '01', origem, validacao, imposto_atual, imposto_padrao
+    return '000001', 'Padrão - Tributação Integral', 'PADRAO', '01', origem, validacao, imposto_atual, imposto_padrao_projetado
 
 # --- INTERFACE ---
 df_regras_json = carregar_json_regras()
@@ -268,12 +277,13 @@ if uploaded_xmls:
                 
                 imposto_node = det.find('ns:imposto', ns)
                 if imposto_node is not None:
-                    # Varre sub-tags (ICMS00, ICMS20, PISAliq, etc) procurando o valor
+                    # Varre recursivamente todas as tags dentro de <imposto>
                     for child in imposto_node.iter():
-                        tag_name = child.tag.split('}')[-1] # Remove namespace
-                        if tag_name == 'vICMS': v_icms = float(child.text)
-                        elif tag_name == 'vPIS': v_pis = float(child.text)
-                        elif tag_name == 'vCOFINS': v_cofins = float(child.text)
+                        tag_name = child.tag.split('}')[-1] 
+                        # Somamos todos os vICMS, vPIS, vCOFINS que encontrarmos (serve para Normal e ST)
+                        if tag_name in ['vICMS', 'vICMSSN']: v_icms += float(child.text)
+                        elif tag_name == 'vPIS': v_pis += float(child.text)
+                        elif tag_name == 'vCOFINS': v_cofins += float(child.text)
 
                 lista_itens.append({
                     'Cód. Produto': c_prod,
@@ -317,26 +327,25 @@ if uploaded_xmls:
         variacao = total_futuro - total_atual
         
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Base Auditada", f"R$ {df_principal['Valor'].sum():,.2f}")
+        c1.metric("Base Auditada (vProd)", f"R$ {df_principal['Valor'].sum():,.2f}")
         
         c2.metric("Carga Atual (ICMS+PIS+COFINS)", f"R$ {total_atual:,.2f}")
         
+        # Delta: Mostra % de aumento ou redução
+        percentual = ((total_futuro/total_atual)-1)*100 if total_atual > 0 else 0
         c3.metric("Carga Projetada (IBS+CBS)", f"R$ {total_futuro:,.2f}", 
-                  delta=f"{((total_futuro/total_atual)-1)*100:.1f}%" if total_atual > 0 else "N/A",
-                  delta_color="inverse") # Inverse: Se subir, fica vermelho. Se cair, verde.
+                  delta=f"{percentual:.1f}%",
+                  delta_color="inverse") # Vermelho se subir, Verde se cair
         
-        # Card de Variação Monetária
+        # Card de Variação
         c4.metric("Impacto Financeiro", f"R$ {abs(variacao):,.2f}", 
-                  delta="Aumento de Imposto" if variacao > 0 else "Redução de Imposto",
+                  delta="Aumento de Carga" if variacao > 0 else "Redução de Carga",
                   delta_color="inverse")
 
         st.markdown("---")
         
         tab1, tab2, tab3 = st.tabs(["📋 Comparativo Item a Item", "📂 Arquivos", "🔍 Itens com Benefício"])
-        with tab1: 
-            # Formatação condicional simples
-            st.dataframe(df_principal, use_container_width=True)
-            
+        with tab1: st.dataframe(df_principal, use_container_width=True)
         with tab2: st.dataframe(df_arquivos, use_container_width=True)
         with tab3: st.dataframe(df_principal[df_principal['Origem Legal'].str.contains("Anexo")], use_container_width=True)
 
@@ -350,7 +359,7 @@ if uploaded_xmls:
         st.download_button(
             label="📥 BAIXAR ESTUDO DE IMPACTO (.xlsx)",
             data=buffer,
-            file_name="Planejamento_Tributario_Nascel.xlsx",
+            file_name="Planejamento_Tributario_Nascel_v23.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             type="primary"
         )
