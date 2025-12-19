@@ -16,13 +16,13 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# CSS PROFISSIONAL (COM CORES PARA FINANCEIRO)
+# CSS PROFISSIONAL (NASCEL THEME)
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap');
     html, body, [class*="css"] {font-family: 'Roboto', sans-serif;}
     
-    /* Textos Gerais */
+    /* Textos Gerais - Cinza Escuro */
     .stMarkdown p, .stMarkdown li, .stDataFrame, div[data-testid="stMarkdownContainer"] p {
         color: #333333 !important; font-size: 1rem;
     }
@@ -182,11 +182,8 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliquota_padrao):
         if ncm in df_tipi.index: validacao = "✅ NCM Válido"
         elif ncm[:4] in df_tipi.index: validacao = "✅ Posição Válida"
 
-    # --- Lógica Financeira ---
-    # Imposto Padrão (Sem benefício)
     imposto_padrao = valor_prod * aliquota_padrao
-    imposto_real = imposto_padrao # Começa igual, diminui se achar regra
-    percentual_reducao = 0.0
+    imposto_real = imposto_padrao 
 
     if verificar_seletivo(ncm):
         return '000001', f'Produto sujeito a Imposto Seletivo', 'ALERTA SELETIVO', '02', 'Trava', validacao, imposto_padrao, 0.0
@@ -203,19 +200,11 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliquota_padrao):
         
     elif anexo:
         regra = CONFIG_ANEXOS[anexo]
-        # Aplica redução
-        fator_reducao = regra.get('Reducao', 0.0) # Ex: 0.6 ou 1.0
-        percentual_reducao = fator_reducao
-        
-        # Se for 1.0 (Zero), imposto real é 0
-        # Se for 0.6 (Redução), a base reduz, ou o imposto reduz 60%
-        # LCP 214 diz redução de alíquota.
+        fator_reducao = regra.get('Reducao', 0.0) 
         imposto_real = imposto_padrao * (1 - fator_reducao)
-        
         return regra['cClassTrib'], f"{regra['Descricao']} - {origem}", regra['Status'], regra['CST'], origem, validacao, imposto_real, (imposto_padrao - imposto_real)
     
     else:
-        # Fallback JSON
         termo = "medicamentos" if ncm.startswith('30') else ("cesta básica" if ncm.startswith('10') else "tributação integral")
         if not df_json.empty and 'Busca' in df_json.columns:
             res = df_json[df_json['Busca'].str.contains(termo, na=False)]
@@ -229,12 +218,7 @@ df_regras_json = carregar_json_regras()
 
 with st.sidebar:
     st.markdown("### 🎛️ Painel de Controle")
-    
-    # PARAMETROS FINANCEIROS
-    st.markdown("#### 💰 Parâmetros Fiscais")
-    aliquota_input = st.number_input("Alíquota Estimada IBS/CBS (%)", min_value=0.0, max_value=100.0, value=26.5, step=0.5)
-    aliquota_decimal = aliquota_input / 100.0
-    
+    aliquota_input = st.number_input("Alíquota IBS/CBS (%)", 0.0, 100.0, 26.5, 0.5)
     uploaded_xmls = st.file_uploader("📂 Arraste os XMLs de Venda", type=['xml'], accept_multiple_files=True)
     
     with st.expander("⚙️ Configurações Avançadas"):
@@ -250,9 +234,8 @@ with st.sidebar:
         
     st.markdown(f"""
     <div style='background-color:#ffffff; padding:10px; border-radius:5px; border-left: 4px solid #EF6C00; border: 1px solid #e0e0e0;'>
-        <small style='color: #2C3E50;'><b>STATUS DO SISTEMA</b><br>
+        <small style='color: #333333;'><b>STATUS DO SISTEMA</b><br>
         ⚖️ Regras Ativas: <b>{len(mapa_lei)}</b><br>
-        💰 Alíquota Base: <b>{aliquota_input}%</b><br>
         📚 Validação TIPI: <b>{'Ativa ✅' if not df_tipi.empty else 'Inativa ⚠️'}</b></small>
     </div>
     """, unsafe_allow_html=True)
@@ -260,7 +243,9 @@ with st.sidebar:
 if uploaded_xmls:
     lista_itens = []
     ns = {'ns': 'http://www.portalfiscal.inf.br/nfe'}
-    prog = st.progress(0)
+    
+    # BARRA DE PROGRESSO LIMPA (Solicitação atendida)
+    bar_progresso = st.progress(0)
     
     for i, arquivo in enumerate(uploaded_xmls):
         try:
@@ -280,63 +265,41 @@ if uploaded_xmls:
                     'Valor': float(prod.find('ns:vProd', ns).text)
                 })
         except: continue
-        prog.progress((i+1)/len(uploaded_xmls))
+        bar_progresso.progress((i+1)/len(uploaded_xmls))
+        
+    # Limpa a barra quando termina
+    bar_progresso.empty()
     
     if lista_itens:
         df_base = pd.DataFrame(lista_itens)
         df_analise = df_base.drop_duplicates(subset=['Cód. Produto', 'NCM', 'CFOP']).copy()
         
-        # Classificação + Calculo Financeiro
         resultados = df_analise.apply(
-            lambda row: classificar_item(row, mapa_lei, df_regras_json, df_tipi, aliquota_decimal), 
+            lambda row: classificar_item(row, mapa_lei, df_regras_json, df_tipi, aliquota_input/100), 
             axis=1, result_type='expand'
         )
         
         df_analise[['cClassTrib', 'Descrição', 'Status', 'Novo CST', 'Origem Legal', 'Validação TIPI', 'Imposto Estimado', 'Economia Potencial']] = resultados
         
-        # Organização Final
-        cols_principal = ['Cód. Produto', 'NCM', 'Produto', 'CFOP', 'Valor', 'Novo CST', 'cClassTrib', 'Status', 'Origem Legal', 'Imposto Estimado', 'Economia Potencial', 'Validação TIPI']
+        cols_principal = ['Cód. Produto', 'NCM', 'Produto', 'CFOP', 'Valor', 'Novo CST', 'cClassTrib', 'Descrição', 'Status', 'Origem Legal', 'Validação TIPI', 'Imposto Estimado', 'Economia Potencial']
         df_principal = df_analise[cols_principal]
         df_arquivos = df_base[['Chave NFe']].drop_duplicates().reset_index(drop=True)
         df_arquivos.columns = ['Arquivos Processados']
         
-        # --- DASHBOARD FINANCEIRO ---
-        st.markdown("### 📊 Inteligência Fiscal")
-        
-        total_auditado = df_principal['Valor'].sum()
-        total_economia = df_principal['Economia Potencial'].sum()
-        itens_beneficio = len(df_principal[df_principal['Origem Legal'].str.contains("Anexo")])
-        
+        st.markdown("### 📊 Resultado da Auditoria")
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Valor Total Auditado", f"R$ {total_auditado:,.2f}")
+        c1.metric("Produtos Auditados", len(df_principal))
         
-        # Estilo CSS específico para deixar o card de economia VERDE
-        st.markdown("""
-        <style>
-        div[data-testid="metric-container"]:nth-child(2) {
-            border-left: 6px solid #27AE60 !important;
-        }
-        div[data-testid="metric-container"]:nth-child(2) label {
-            color: #1E8449 !important;
-        }
-        </style>
-        """, unsafe_allow_html=True)
-        
-        c2.metric("Economia Potencial Estimada", f"R$ {total_economia:,.2f}", delta="Benefício", delta_color="normal")
-        c3.metric("Itens com Benefício", itens_beneficio)
+        # Ajuste visual card verde
+        st.markdown("""<style>div[data-testid="metric-container"]:nth-child(2) {border-left: 6px solid #27AE60 !important;}</style>""", unsafe_allow_html=True)
+        c2.metric("Economia Estimada", f"R$ {df_principal['Economia Potencial'].sum():,.2f}", delta="Benefício", delta_color="normal")
         
         erros_tipi = len(df_principal[df_principal['Validação TIPI'].str.contains("Ausente")])
-        c4.metric("Erros Cadastro", erros_tipi, delta="Inverter" if erros_tipi > 0 else "OK", delta_color="inverse")
+        c3.metric("Erros Cadastro", erros_tipi, delta="Atenção" if erros_tipi > 0 else "OK", delta_color="inverse")
         
-        # Gráficos Simples (Nativos do Streamlit)
-        st.markdown("---")
-        st.markdown("#### 📈 Distribuição da Carga Tributária")
+        c4.metric("Itens com Benefício", len(df_principal[df_principal['Origem Legal'].str.contains("Anexo")]))
         
-        # Prepara dados para gráfico
-        chart_data = df_principal['Status'].value_counts()
-        st.bar_chart(chart_data, color="#EF6C00") # Cor laranja Nascel
-        
-        tab1, tab2, tab3 = st.tabs(["📋 Auditoria Detalhada", "📂 Arquivos", "🔍 Itens com Benefício"])
+        tab1, tab2, tab3 = st.tabs(["📋 Lista Geral", "📂 Arquivos", "🔍 Apenas Benefícios"])
         with tab1: st.dataframe(df_principal, use_container_width=True)
         with tab2: st.dataframe(df_arquivos, use_container_width=True)
         with tab3: st.dataframe(df_principal[df_principal['Origem Legal'].str.contains("Anexo")], use_container_width=True)
@@ -351,7 +314,13 @@ if uploaded_xmls:
         st.download_button(
             label="📥 BAIXAR RELATÓRIO COMPLETO",
             data=buffer,
-            file_name="Auditoria_Nascel_v20.xlsx",
+            file_name="Auditoria_Nascel_v21.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             type="primary"
         )
+        
+        # Gráfico movido para o FINAL (conforme pedido)
+        st.markdown("---")
+        st.markdown("#### 📈 Distribuição da Carga Tributária")
+        chart_data = df_principal['Status'].value_counts()
+        st.bar_chart(chart_data, color="#EF6C00")
