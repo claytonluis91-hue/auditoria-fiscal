@@ -22,7 +22,7 @@ st.markdown("""
     @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap');
     html, body, [class*="css"] {font-family: 'Roboto', sans-serif;}
     
-    /* Textos Gerais - Cinza Escuro */
+    /* Textos Gerais */
     .stMarkdown p, .stMarkdown li, .stDataFrame, div[data-testid="stMarkdownContainer"] p {
         color: #333333 !important; font-size: 1rem;
     }
@@ -56,8 +56,9 @@ st.markdown("""
     /* Sidebar */
     section[data-testid="stSidebar"] {background-color: #F4F6F7; border-right: 1px solid #CFD8DC;}
     
-    /* Destaque Financeiro (Verde) */
-    .metric-green {border-left: 6px solid #27AE60 !important;}
+    /* Classes Específicas para Cores de Variação */
+    .impacto-positivo {color: #27AE60 !important;} /* Verde (Redução de Imposto) */
+    .impacto-negativo {color: #C0392B !important;} /* Vermelho (Aumento de Imposto) */
     </style>
     """, unsafe_allow_html=True)
 
@@ -182,11 +183,15 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliquota_padrao):
         if ncm in df_tipi.index: validacao = "✅ NCM Válido"
         elif ncm[:4] in df_tipi.index: validacao = "✅ Posição Válida"
 
+    # Cálculo da Carga Atual (Lida do XML)
+    imposto_atual = float(row.get('vICMS', 0)) + float(row.get('vPIS', 0)) + float(row.get('vCOFINS', 0))
+
+    # Cálculo do Futuro (IBS/CBS)
     imposto_padrao = valor_prod * aliquota_padrao
-    imposto_real = imposto_padrao 
+    imposto_futuro = imposto_padrao 
 
     if verificar_seletivo(ncm):
-        return '000001', f'Produto sujeito a Imposto Seletivo', 'ALERTA SELETIVO', '02', 'Trava', validacao, imposto_padrao, 0.0
+        return '000001', f'Produto sujeito a Imposto Seletivo', 'ALERTA SELETIVO', '02', 'Trava', validacao, imposto_atual, imposto_padrao
 
     anexo, origem = None, "Regra Geral"
     for tent in [ncm, ncm[:6], ncm[:4], ncm[:2]]:
@@ -201,17 +206,17 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliquota_padrao):
     elif anexo:
         regra = CONFIG_ANEXOS[anexo]
         fator_reducao = regra.get('Reducao', 0.0) 
-        imposto_real = imposto_padrao * (1 - fator_reducao)
-        return regra['cClassTrib'], f"{regra['Descricao']} - {origem}", regra['Status'], regra['CST'], origem, validacao, imposto_real, (imposto_padrao - imposto_real)
+        imposto_futuro = imposto_padrao * (1 - fator_reducao)
+        return regra['cClassTrib'], f"{regra['Descricao']} - {origem}", regra['Status'], regra['CST'], origem, validacao, imposto_atual, imposto_futuro
     
     else:
         termo = "medicamentos" if ncm.startswith('30') else ("cesta básica" if ncm.startswith('10') else "tributação integral")
         if not df_json.empty and 'Busca' in df_json.columns:
             res = df_json[df_json['Busca'].str.contains(termo, na=False)]
             if not res.empty:
-                return res.iloc[0]['Código da Classificação Tributária'], res.iloc[0]['Descrição do Código da Classificação Tributária'], "SUGESTAO JSON", res.iloc[0].get('Código da Situação Tributária', '01'), origem, validacao, imposto_padrao, 0.0
+                return res.iloc[0]['Código da Classificação Tributária'], res.iloc[0]['Descrição do Código da Classificação Tributária'], "SUGESTAO JSON", res.iloc[0].get('Código da Situação Tributária', '01'), origem, validacao, imposto_atual, imposto_padrao
 
-    return '000001', 'Padrão - Tributação Integral', 'PADRAO', '01', origem, validacao, imposto_padrao, 0.0
+    return '000001', 'Padrão - Tributação Integral', 'PADRAO', '01', origem, validacao, imposto_atual, imposto_padrao
 
 # --- INTERFACE ---
 df_regras_json = carregar_json_regras()
@@ -236,6 +241,7 @@ with st.sidebar:
     <div style='background-color:#ffffff; padding:10px; border-radius:5px; border-left: 4px solid #EF6C00; border: 1px solid #e0e0e0;'>
         <small style='color: #333333;'><b>STATUS DO SISTEMA</b><br>
         ⚖️ Regras Ativas: <b>{len(mapa_lei)}</b><br>
+        💰 Alíquota Base: <b>{aliquota_input}%</b><br>
         📚 Validação TIPI: <b>{'Ativa ✅' if not df_tipi.empty else 'Inativa ⚠️'}</b></small>
     </div>
     """, unsafe_allow_html=True)
@@ -243,8 +249,6 @@ with st.sidebar:
 if uploaded_xmls:
     lista_itens = []
     ns = {'ns': 'http://www.portalfiscal.inf.br/nfe'}
-    
-    # BARRA DE PROGRESSO LIMPA (Solicitação atendida)
     bar_progresso = st.progress(0)
     
     for i, arquivo in enumerate(uploaded_xmls):
@@ -256,18 +260,35 @@ if uploaded_xmls:
             for det in root.findall('.//ns:det', ns):
                 prod = det.find('ns:prod', ns)
                 c_prod = prod.find('ns:cProd', ns).text
+                
+                # --- EXTRAÇÃO PROFUNDA DE IMPOSTOS ---
+                v_icms = 0.0
+                v_pis = 0.0
+                v_cofins = 0.0
+                
+                imposto_node = det.find('ns:imposto', ns)
+                if imposto_node is not None:
+                    # Varre sub-tags (ICMS00, ICMS20, PISAliq, etc) procurando o valor
+                    for child in imposto_node.iter():
+                        tag_name = child.tag.split('}')[-1] # Remove namespace
+                        if tag_name == 'vICMS': v_icms = float(child.text)
+                        elif tag_name == 'vPIS': v_pis = float(child.text)
+                        elif tag_name == 'vCOFINS': v_cofins = float(child.text)
+
                 lista_itens.append({
                     'Cód. Produto': c_prod,
                     'Chave NFe': chave,
                     'NCM': prod.find('ns:NCM', ns).text,
                     'Produto': prod.find('ns:xProd', ns).text,
                     'CFOP': prod.find('ns:CFOP', ns).text,
-                    'Valor': float(prod.find('ns:vProd', ns).text)
+                    'Valor': float(prod.find('ns:vProd', ns).text),
+                    'vICMS': v_icms,
+                    'vPIS': v_pis,
+                    'vCOFINS': v_cofins
                 })
         except: continue
         bar_progresso.progress((i+1)/len(uploaded_xmls))
         
-    # Limpa a barra quando termina
     bar_progresso.empty()
     
     if lista_itens:
@@ -279,48 +300,62 @@ if uploaded_xmls:
             axis=1, result_type='expand'
         )
         
-        df_analise[['cClassTrib', 'Descrição', 'Status', 'Novo CST', 'Origem Legal', 'Validação TIPI', 'Imposto Estimado', 'Economia Potencial']] = resultados
+        df_analise[['cClassTrib', 'Descrição', 'Status', 'Novo CST', 'Origem Legal', 'Validação TIPI', 'Carga Atual', 'Carga Projetada']] = resultados
         
-        cols_principal = ['Cód. Produto', 'NCM', 'Produto', 'CFOP', 'Valor', 'Novo CST', 'cClassTrib', 'Descrição', 'Status', 'Origem Legal', 'Validação TIPI', 'Imposto Estimado', 'Economia Potencial']
+        # Diferença (Impacto)
+        df_analise['Impacto Financeiro'] = df_analise['Carga Projetada'] - df_analise['Carga Atual']
+        
+        cols_principal = ['Cód. Produto', 'NCM', 'Produto', 'CFOP', 'Valor', 'Status', 'Carga Atual', 'Carga Projetada', 'Impacto Financeiro', 'Novo CST', 'cClassTrib', 'Origem Legal', 'Validação TIPI']
         df_principal = df_analise[cols_principal]
         df_arquivos = df_base[['Chave NFe']].drop_duplicates().reset_index(drop=True)
         df_arquivos.columns = ['Arquivos Processados']
         
-        st.markdown("### 📊 Resultado da Auditoria")
+        st.markdown("### 📊 Planejamento Tributário (Atual vs Reforma)")
+        
+        total_atual = df_principal['Carga Atual'].sum()
+        total_futuro = df_principal['Carga Projetada'].sum()
+        variacao = total_futuro - total_atual
+        
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Produtos Auditados", len(df_principal))
+        c1.metric("Base Auditada", f"R$ {df_principal['Valor'].sum():,.2f}")
         
-        # Ajuste visual card verde
-        st.markdown("""<style>div[data-testid="metric-container"]:nth-child(2) {border-left: 6px solid #27AE60 !important;}</style>""", unsafe_allow_html=True)
-        c2.metric("Economia Estimada", f"R$ {df_principal['Economia Potencial'].sum():,.2f}", delta="Benefício", delta_color="normal")
+        c2.metric("Carga Atual (ICMS+PIS+COFINS)", f"R$ {total_atual:,.2f}")
         
-        erros_tipi = len(df_principal[df_principal['Validação TIPI'].str.contains("Ausente")])
-        c3.metric("Erros Cadastro", erros_tipi, delta="Atenção" if erros_tipi > 0 else "OK", delta_color="inverse")
+        c3.metric("Carga Projetada (IBS+CBS)", f"R$ {total_futuro:,.2f}", 
+                  delta=f"{((total_futuro/total_atual)-1)*100:.1f}%" if total_atual > 0 else "N/A",
+                  delta_color="inverse") # Inverse: Se subir, fica vermelho. Se cair, verde.
         
-        c4.metric("Itens com Benefício", len(df_principal[df_principal['Origem Legal'].str.contains("Anexo")]))
+        # Card de Variação Monetária
+        c4.metric("Impacto Financeiro", f"R$ {abs(variacao):,.2f}", 
+                  delta="Aumento de Imposto" if variacao > 0 else "Redução de Imposto",
+                  delta_color="inverse")
+
+        st.markdown("---")
         
-        tab1, tab2, tab3 = st.tabs(["📋 Lista Geral", "📂 Arquivos", "🔍 Apenas Benefícios"])
-        with tab1: st.dataframe(df_principal, use_container_width=True)
+        tab1, tab2, tab3 = st.tabs(["📋 Comparativo Item a Item", "📂 Arquivos", "🔍 Itens com Benefício"])
+        with tab1: 
+            # Formatação condicional simples
+            st.dataframe(df_principal, use_container_width=True)
+            
         with tab2: st.dataframe(df_arquivos, use_container_width=True)
         with tab3: st.dataframe(df_principal[df_principal['Origem Legal'].str.contains("Anexo")], use_container_width=True)
 
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-            df_principal.to_excel(writer, index=False, sheet_name="Auditoria Detalhada")
+            df_principal.to_excel(writer, index=False, sheet_name="Planejamento Tributario")
             df_arquivos.to_excel(writer, index=False, sheet_name="Arquivos")
             if not df_tipi.empty:
                 df_principal[df_principal['Validação TIPI'].str.contains("Ausente")].to_excel(writer, index=False, sheet_name="Erros Cadastro")
         
         st.download_button(
-            label="📥 BAIXAR RELATÓRIO COMPLETO",
+            label="📥 BAIXAR ESTUDO DE IMPACTO (.xlsx)",
             data=buffer,
-            file_name="Auditoria_Nascel_v21.xlsx",
+            file_name="Planejamento_Tributario_Nascel.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             type="primary"
         )
         
-        # Gráfico movido para o FINAL (conforme pedido)
         st.markdown("---")
-        st.markdown("#### 📈 Distribuição da Carga Tributária")
+        st.markdown("#### 📈 Distribuição da Nova Carga Tributária")
         chart_data = df_principal['Status'].value_counts()
         st.bar_chart(chart_data, color="#EF6C00")
