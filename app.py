@@ -6,7 +6,7 @@ import requests
 from bs4 import BeautifulSoup
 import re
 import io
-import os # Para verificar se o arquivo existe na pasta
+import os
 
 # --- 1. CONFIGURAÇÃO VISUAL ---
 st.set_page_config(page_title="Auditoria Fiscal - LCP 214", page_icon="⚖️", layout="wide")
@@ -19,7 +19,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("Sistema de Auditoria Fiscal 13.1 (Automático)")
+st.title("Sistema de Auditoria Fiscal 13.2 (Correção 'Busca')")
 st.caption("Cruzamento: XML vs LCP 214 (Lista Mestra) vs Tabela TIPI (Auto-Carregamento)")
 st.divider()
 
@@ -82,54 +82,46 @@ CONFIG_ANEXOS = {
     "ANEXO XV": {"Descricao": "Hortifruti e Ovos", "cClassTrib": "200003", "CST": "40", "Status": "ZERO (Anexo XV)", "Caps": ["04","07","08"]}
 }
 
-# --- 4. CARREGAMENTO DE DADOS (AGORA AUTOMÁTICO) ---
+# --- 4. CARREGAMENTO DE DADOS ---
 
 @st.cache_data
 def carregar_tipi(uploaded_file=None):
-    """
-    Carrega TIPI. Tenta arquivo local 'tipi.xlsx' se nenhum upload for feito.
-    """
+    """Carrega TIPI. Tenta arquivo local 'tipi.xlsx' se nenhum upload for feito."""
     arquivo_para_ler = None
+    if uploaded_file is not None: arquivo_para_ler = uploaded_file
+    elif os.path.exists("tipi.xlsx"): arquivo_para_ler = "tipi.xlsx"
     
-    # 1. Prioridade: Upload do usuário
-    if uploaded_file is not None:
-        arquivo_para_ler = uploaded_file
-    # 2. Fallback: Arquivo local na pasta
-    elif os.path.exists("tipi.xlsx"):
-        arquivo_para_ler = "tipi.xlsx"
-    
-    if arquivo_para_ler is None:
-        return pd.DataFrame()
+    if arquivo_para_ler is None: return pd.DataFrame()
 
     try:
-        # Lê Excel ou CSV
-        try:
-            df = pd.read_excel(arquivo_para_ler, dtype=str)
-        except:
-            df = pd.read_csv(arquivo_para_ler, dtype=str, on_bad_lines='skip')
+        try: df = pd.read_excel(arquivo_para_ler, dtype=str)
+        except: df = pd.read_csv(arquivo_para_ler, dtype=str, on_bad_lines='skip')
             
-        # Limpeza
-        for col in df.columns:
-            df[col] = df[col].astype(str).str.strip()
-            
-        # Cria índice de busca
+        for col in df.columns: df[col] = df[col].astype(str).str.strip()
         df['NCM_Limpo'] = df.iloc[:, 0].apply(lambda x: re.sub(r'[^0-9]', '', str(x)))
         df = df[df['NCM_Limpo'].str.len().isin([4, 8])]
         return df.set_index('NCM_Limpo')
-    except Exception as e:
-        return pd.DataFrame()
+    except: return pd.DataFrame()
 
 @st.cache_data
 def carregar_json_regras():
+    # --- AQUI ESTAVA O PROBLEMA, CORRIGIDO AGORA ---
     try:
         with open('classificacao_tributaria.json', 'r', encoding='utf-8') as f:
             dados = json.load(f)
-            return pd.DataFrame(dados)
-    except: return pd.DataFrame()
+            df = pd.DataFrame(dados)
+            # Cria coluna de busca se ela não existir
+            if 'Descrição do Código da Classificação Tributária' in df.columns:
+                df['Busca'] = df['Descrição do Código da Classificação Tributária'].str.lower()
+            else:
+                df['Busca'] = "" # Cria vazia para não dar erro
+            return df
+    except: 
+        # Retorna DataFrame vazio com a coluna 'Busca' para evitar KeyError
+        return pd.DataFrame(columns=['Busca'])
 
 def extrair_regras(texto_fonte, mapa_existente, nome_fonte):
     texto = re.sub(r'\s+', ' ', texto_fonte)
-    
     anexos_pos = []
     for anexo in CONFIG_ANEXOS.keys():
         pos = texto.upper().find(anexo)
@@ -156,15 +148,12 @@ def extrair_regras(texto_fonte, mapa_existente, nome_fonte):
 @st.cache_data
 def carregar_base_legal():
     mapa = {}
-    # 1. Site
     try:
         url = "https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp214.htm"
         resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
         soup = BeautifulSoup(resp.content, 'html.parser')
         mapa = extrair_regras(soup.get_text(separator=' '), mapa, "SITE")
     except: pass
-    
-    # 2. Backup Manual (Sua Lista)
     mapa = extrair_regras(TEXTO_MESTRA, mapa, "BACKUP")
     return mapa
 
@@ -172,7 +161,6 @@ def carregar_base_legal():
 
 def verificar_seletivo(ncm):
     ncm = str(ncm).replace('.', '')
-    # Bloqueios IS
     if any(ncm.startswith(p) for p in ['2203','2204','2205','2206','2207','2208','24','87','93']):
         return True
     return False
@@ -181,7 +169,6 @@ def classificar_item(row, mapa_regras, df_json, df_tipi):
     ncm = str(row['NCM']).replace('.', '')
     cfop = str(row['CFOP']).replace('.', '')
     
-    # Validação TIPI
     validacao = "⚠️ NCM não cadastrado na TIPI"
     if not df_tipi.empty:
         if ncm in df_tipi.index: validacao = "✅ NCM Válido"
@@ -208,12 +195,12 @@ def classificar_item(row, mapa_regras, df_json, df_tipi):
         return regra['cClassTrib'], f"{regra['Descricao']} - {origem}", regra['Status'], regra['CST'], origem, validacao
     
     else:
-        # Fallback JSON
+        # Fallback JSON (Agora seguro contra KeyError)
         termo = "tributação integral"
         if ncm.startswith('30'): termo = "medicamentos"
         elif ncm.startswith('10'): termo = "cesta básica"
         
-        if not df_json.empty:
+        if not df_json.empty and 'Busca' in df_json.columns:
             res = df_json[df_json['Busca'].str.contains(termo, na=False)]
             if not res.empty:
                 return res.iloc[0]['Código da Classificação Tributária'], res.iloc[0]['Descrição do Código da Classificação Tributária'], "SUGESTAO JSON", res.iloc[0].get('Código da Situação Tributária', '01'), origem, validacao
@@ -226,27 +213,18 @@ df_regras_json = carregar_json_regras()
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/3029/3029337.png", width=60)
     st.markdown("### Painel de Controle")
-    
     uploaded_xmls = st.file_uploader("1. XMLs de Venda", type=['xml'], accept_multiple_files=True)
-    
-    # Campo opcional, pois agora ele tenta ler da pasta
     uploaded_tipi = st.file_uploader("2. Atualizar TIPI (Opcional)", type=['xlsx', 'csv'])
-    
     st.divider()
-    
     with st.spinner("Iniciando sistema..."):
         mapa_lei = carregar_base_legal()
-        # Carrega TIPI (Do upload OU da pasta)
         df_tipi = carregar_tipi(uploaded_tipi) 
-        
     st.success(f"⚖️ Lei Mapeada: {len(mapa_lei)} regras")
-    if not df_tipi.empty:
-        st.success(f"📚 TIPI Carregada: {len(df_tipi)} códigos")
-    else:
-        st.warning("TIPI não encontrada na pasta.")
+    if not df_tipi.empty: st.success(f"📚 TIPI Carregada: {len(df_tipi)} códigos")
+    else: st.warning("TIPI não encontrada na pasta.")
 
 if uploaded_xmls:
-    if df_regras_json.empty: st.warning("Sem JSON.")
+    if df_regras_json.empty: st.warning("Atenção: Arquivo JSON de regras não carregado.")
     lista_itens = []
     ns = {'ns': 'http://www.portalfiscal.inf.br/nfe'}
     progresso = st.progress(0)
@@ -279,14 +257,12 @@ if uploaded_xmls:
         
         df_analise[['cClassTrib', 'Descrição', 'Status', 'CST', 'Origem Legal', 'Validação TIPI']] = resultados
         
-        st.write("### 📊 Auditoria Fiscal 13.1")
+        st.write("### 📊 Auditoria Fiscal 13.2")
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Itens", len(df_analise))
         c2.metric("Na Lei", len(df_analise[df_analise['Origem Legal'].str.contains("Anexo")]))
-        
         n_erros_ncm = len(df_analise[df_analise['Validação TIPI'].str.contains("não cadastrado")])
-        c3.metric("Erros NCM (TIPI)", n_erros_ncm, delta="Atenção" if n_erros_ncm > 0 else None, delta_color="inverse")
-        
+        c3.metric("Erros NCM", n_erros_ncm, delta="Atenção" if n_erros_ncm > 0 else None, delta_color="inverse")
         n_alertas = len(df_analise[df_analise['Status'] == "ALERTA SELETIVO"])
         c4.metric("Seletivo", n_alertas, delta="Bloqueado" if n_alertas > 0 else None, delta_color="inverse")
         
@@ -305,4 +281,4 @@ if uploaded_xmls:
             if not df_tipi.empty:
                 df_analise[df_analise['Validação TIPI'].str.contains("não cadastrado")].to_excel(writer, index=False, sheet_name="Erros NCM")
         
-        st.download_button("📥 Baixar Relatório Final (.xlsx)", buffer, "Auditoria_Nascel_v13_Auto.xlsx", "primary")
+        st.download_button("📥 Baixar Relatório Final (.xlsx)", buffer, "Auditoria_Nascel_v13_2.xlsx", "primary")
