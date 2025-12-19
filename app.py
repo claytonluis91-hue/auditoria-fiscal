@@ -12,20 +12,19 @@ st.set_page_config(page_title="Auditoria Fiscal - LCP 214", page_icon="⚖️", 
 st.markdown("""
     <style>
     .main {background-color: #f8f9fa;}
-    h1 {color: #1F618D;}
-    .stMetric {background-color: #fff; padding: 15px; border-radius: 8px; border-left: 5px solid #1F618D; box-shadow: 0 2px 4px rgba(0,0,0,0.1);}
+    h1 {color: #154360;}
+    .stMetric {background-color: #fff; border: 1px solid #ddd; border-left: 5px solid #154360; border-radius: 5px;}
     </style>
     """, unsafe_allow_html=True)
 
-st.title("Sistema de Auditoria Fiscal Inteligente 10.0")
-st.caption("Leitura Hierárquica: Capítulos (2) > Posições (4) > NCMs (8)")
+st.title("Sistema de Auditoria Fiscal Inteligente (Versão 11.0)")
+st.caption("Correção de Leitura Hierárquica (XX.XX e XX.XX.XX)")
 st.divider()
 
 # --- 2. CONFIGURAÇÃO DOS ANEXOS ---
-# Mantemos sua configuração rica dos anexos
+# Ajustado para permitir os capítulos corretos
 CONFIG_ANEXOS = {
     "ANEXO I": {"Descricao": "Cesta Básica (Aliq. Zero)", "cClassTrib": "200003", "CST": "40", "Status": "ZERO (Anexo I)", "Capitulos_Permitidos": ["02","03","04","07","08","09","10","11","12","15","16","17","18","19","20","21","23","25"]},
-    "ANEXO II": {"Descricao": "Serv. Educação (Red. 60%)", "cClassTrib": "200020", "CST": "20", "Status": "REDUZIDA 60% (Anexo II)", "Capitulos_Permitidos": []}, # Serviços não tem NCM, mas deixamos aqui
     "ANEXO IV": {"Descricao": "Dispositivos Médicos (Red. 60%)", "cClassTrib": "200005", "CST": "20", "Status": "REDUZIDA 60% (Anexo IV)", "Capitulos_Permitidos": ["30","37","39","40","84","90","94"]},
     "ANEXO VII": {"Descricao": "Alimentos Reduzidos (Red. 60%)", "cClassTrib": "200003", "CST": "20", "Status": "REDUZIDA 60% (Anexo VII)", "Capitulos_Permitidos": ["03","04","07","08","10","11","12","15","16","19","20","21","22"]},
     "ANEXO VIII": {"Descricao": "Higiene Pessoal (Red. 60%)", "cClassTrib": "200035", "CST": "20", "Status": "REDUZIDA 60% (Anexo VIII)", "Capitulos_Permitidos": ["33","34","38","48","96"]},
@@ -37,12 +36,12 @@ CONFIG_ANEXOS = {
 # --- 3. TRAVA DE SEGURANÇA (IS) ---
 def verificar_imposto_seletivo(ncm):
     ncm = str(ncm).replace('.', '')
-    # Bloqueia Álcool, Tabaco, Carros, Armas
+    # Bloqueia Álcool, Tabaco, Veículos, Armas
     if any(ncm.startswith(p) for p in ['2203','2204','2205','2206','2207','2208','24','87','93']):
         return True
     return False
 
-# --- 4. LEITURA HIERÁRQUICA (O NOVO CÉREBRO) ---
+# --- 4. LEITURA COM REGEX TURBINADO ---
 @st.cache_data
 def carregar_regras():
     try:
@@ -64,94 +63,97 @@ def mapear_anexos_online():
         soup = BeautifulSoup(response.content, 'html.parser')
         for s in soup(["script", "style"]): s.extract()
         texto = soup.get_text(separator=' ').replace('\n', ' ')
-        texto = re.sub(r'\s+', ' ', texto) # Texto limpo, mas COM pontuação
+        texto = re.sub(r'\s+', ' ', texto) 
         
-        # Mapeia onde começa cada anexo
+        # Encontra Anexos
         anexos_pos = []
         for anexo in CONFIG_ANEXOS.keys():
             pos = texto.upper().find(anexo)
             if pos != -1: anexos_pos.append((pos, anexo))
         anexos_pos.sort()
         
-        # Loop pelos Anexos
+        # Loop de Extração
         for i in range(len(anexos_pos)):
             nome_anexo = anexos_pos[i][1]
             inicio = anexos_pos[i][0]
             fim = anexos_pos[i+1][0] if i+1 < len(anexos_pos) else len(texto)
+            bloco = texto[inicio:fim]
             
-            bloco = texto[inicio:fim] # Bloco de texto com pontuação preservada
+            # --- FERRAMENTAS DE EXTRAÇÃO ---
             
-            # --- EXTRAÇÃO HIERÁRQUICA ---
+            # 1. NCM Completo (8 dígitos): 1006.30.00
+            ncms_8 = re.findall(r'(?<!\d)(\d{4})\.(\d{2})\.(\d{2})(?!\d)', bloco)
             
-            # 1. NCMs Completos (8 dígitos): 1006.30.00 ou 10063000
-            ncms_full = re.findall(r'\b\d{4}\.?\d{2}\.?\d{2}\b', bloco)
+            # 2. Subposição (6 dígitos): 1006.30
+            ncms_6 = re.findall(r'(?<!\d)(\d{4})\.(\d{2})(?!\d)', bloco)
             
-            # 2. Posições (4 dígitos): 20.04 ou 07.01 (Aqui está o pulo do gato!)
-            # Procuramos XX.XX explicitamente
-            posicoes = re.findall(r'\b\d{2}\.\d{2}\b', bloco)
+            # 3. Posição (4 dígitos): 20.04 (AQUI RESOLVE A BATATA)
+            ncms_4 = re.findall(r'(?<!\d)(\d{2})\.(\d{2})(?!\d)', bloco)
             
-            # 3. Capítulos (2 dígitos): "Capítulo 10" ou "capítulo 12"
-            capitulos = re.findall(r'Capítulo\s+(\d{1,2})', bloco, re.IGNORECASE)
+            # 4. Capítulos (2 dígitos): "Capítulo 10"
+            caps = re.findall(r'Capítulo\s+(\d{1,2})', bloco, re.IGNORECASE)
             
-            # --- PROCESSAMENTO ---
             capitulos_aceitos = CONFIG_ANEXOS[nome_anexo]["Capitulos_Permitidos"]
             
-            # Grava 8 Dígitos
-            for n in ncms_full:
-                n_limpo = n.replace('.', '')
-                if len(n_limpo) == 8:
-                    if not capitulos_aceitos or any(n_limpo.startswith(c) for c in capitulos_aceitos):
-                        mapa_ncm_anexo[n_limpo] = nome_anexo
+            # Processa 8 dígitos
+            for n in ncms_8:
+                codigo = f"{n[0]}{n[1]}{n[2]}" # Junta as partes
+                if not capitulos_aceitos or any(codigo.startswith(c) for c in capitulos_aceitos):
+                    mapa_ncm_anexo[codigo] = nome_anexo
 
-            # Grava 4 Dígitos (Posições) - Ex: Grava "2004"
-            for p in posicoes:
-                p_limpo = p.replace('.', '')
-                if len(p_limpo) == 4:
-                    if not capitulos_aceitos or any(p_limpo.startswith(c) for c in capitulos_aceitos):
-                        if p_limpo not in mapa_ncm_anexo: # Prioridade para regras mais específicas se houver
-                            mapa_ncm_anexo[p_limpo] = nome_anexo
-            
-            # Grava 2 Dígitos (Capítulos)
-            for c in capitulos:
-                c_limpo = c.zfill(2) # Garante que "7" vire "07"
-                if not capitulos_aceitos or c_limpo in capitulos_aceitos:
-                    if c_limpo not in mapa_ncm_anexo:
-                        mapa_ncm_anexo[c_limpo] = nome_anexo
+            # Processa 6 dígitos
+            for n in ncms_6:
+                codigo = f"{n[0]}{n[1]}"
+                if not capitulos_aceitos or any(codigo.startswith(c) for c in capitulos_aceitos):
+                    # Prioridade: Só grava se não tiver regra mais específica
+                    if codigo not in mapa_ncm_anexo: mapa_ncm_anexo[codigo] = nome_anexo
+
+            # Processa 4 dígitos (Posições)
+            for n in ncms_4:
+                codigo = f"{n[0]}{n[1]}"
+                if not capitulos_aceitos or any(codigo.startswith(c) for c in capitulos_aceitos):
+                    if codigo not in mapa_ncm_anexo: mapa_ncm_anexo[codigo] = nome_anexo
+
+            # Processa 2 dígitos
+            for c in caps:
+                codigo = c.zfill(2)
+                if not capitulos_aceitos or codigo in capitulos_aceitos:
+                    if codigo not in mapa_ncm_anexo: mapa_ncm_anexo[codigo] = nome_anexo
 
         return mapa_ncm_anexo
     except Exception as e:
+        st.error(f"Erro leitura: {e}")
         return {}
 
 # --- 5. CLASSIFICAÇÃO COM CASCATA ---
-
 def classificar_item_master(ncm, cfop, produto, df_regras, mapa_anexos):
     ncm_limpo = str(ncm).replace('.', '')
     cfop_limpo = str(cfop).replace('.', '')
     
-    # Seletivo (Bloqueio)
     if verificar_imposto_seletivo(ncm_limpo):
         return '000001', 'Produto sujeito a Imposto Seletivo', 'ALERTA SELETIVO', '02', 'Trava de Segurança'
 
-    # --- CASCATA DE HIERARQUIA (AQUI RESOLVE A BATATA) ---
     anexo_encontrado = None
     origem = "Regra Geral"
     
-    # 1. Tenta match exato (8 dígitos) - Ex: 20041000
+    # --- CASCATA DE VERIFICAÇÃO ---
+    # 1. Match Exato (8 dígitos)
     if ncm_limpo in mapa_anexos:
         anexo_encontrado = mapa_anexos[ncm_limpo]
         origem = f"{anexo_encontrado} (NCM Exato)"
-        
-    # 2. Tenta match de Posição (4 dígitos) - Ex: 2004
+    # 2. Match 6 dígitos
+    elif ncm_limpo[:6] in mapa_anexos:
+        anexo_encontrado = mapa_anexos[ncm_limpo[:6]]
+        origem = f"{anexo_encontrado} (Subposição {ncm_limpo[:6]})"
+    # 3. Match 4 dígitos (A Batata entra aqui!)
     elif ncm_limpo[:4] in mapa_anexos:
         anexo_encontrado = mapa_anexos[ncm_limpo[:4]]
-        origem = f"{anexo_encontrado} (Pela Posição {ncm_limpo[:4]})"
-        
-    # 3. Tenta match de Capítulo (2 dígitos) - Ex: 07
+        origem = f"{anexo_encontrado} (Posição {ncm_limpo[:4]})"
+    # 4. Match 2 dígitos (Capítulo)
     elif ncm_limpo[:2] in mapa_anexos:
         anexo_encontrado = mapa_anexos[ncm_limpo[:2]]
-        origem = f"{anexo_encontrado} (Pelo Capítulo {ncm_limpo[:2]})"
+        origem = f"{anexo_encontrado} (Capítulo {ncm_limpo[:2]})"
 
-    # Aplica Regras
     if cfop_limpo.startswith('7'):
         return '410004', 'Exportação', 'IMUNE', '50', 'Não'
         
@@ -178,10 +180,25 @@ df_regras = carregar_regras()
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/3029/3029337.png", width=50)
     st.title("Auditor LCP 214")
-    uploaded_files = st.file_uploader("XMLs", type=['xml'], accept_multiple_files=True)
-    with st.spinner("Lendo Lei Hierárquica..."):
+    
+    # --- DEBUGGER VISUAL ---
+    st.markdown("### 🔍 Raio-X da Memória")
+    with st.spinner("Lendo Planalto..."):
         mapa_anexos = mapear_anexos_online()
-    if mapa_anexos: st.success(f"🟢 Conectado: {len(mapa_anexos)} regras mapeadas.")
+    
+    if mapa_anexos:
+        st.success(f"Conectado: {len(mapa_anexos)} regras.")
+        teste_ncm = st.text_input("Testar NCM (ex: 2004, 1006):")
+        if teste_ncm:
+            # Remove pontos para buscar na chave do dicionário
+            chave = teste_ncm.replace('.', '')
+            if chave in mapa_anexos:
+                st.info(f"✅ Encontrado: {mapa_anexos[chave]}")
+            else:
+                st.error("❌ Não consta na lista da Lei.")
+                st.caption("Dica: Tente buscar apenas os 4 primeiros dígitos.")
+    
+    uploaded_files = st.file_uploader("XMLs", type=['xml'], accept_multiple_files=True)
 
 if uploaded_files:
     if df_regras.empty: st.warning("Sem JSON de regras.")
@@ -213,9 +230,9 @@ if uploaded_files:
         resultados = df_analise.apply(lambda row: classificar_item_master(row['NCM'], row['CFOP'], row['Produto'], df_regras, mapa_anexos), axis=1, result_type='expand')
         df_analise[['cClassTrib', 'Descrição', 'Status', 'CST', 'Origem Legal']] = resultados
         
-        st.write("### Auditoria Fiscal (Hierárquica)")
+        st.write("### Resultado da Auditoria")
         c1,c2,c3 = st.columns(3)
-        c1.metric("Itens", len(df_analise))
+        c1.metric("Itens Analisados", len(df_analise))
         c2.metric("Encontrados na Lei", len(df_analise[df_analise['Origem Legal'].str.contains("Anexo")]))
         c3.metric("Alertas Seletivo", len(df_analise[df_analise['Status'] == "ALERTA SELETIVO"]), delta_color="inverse")
         
@@ -226,4 +243,4 @@ if uploaded_files:
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
             df_analise.to_excel(writer, index=False)
-        st.download_button("Baixar Excel (.xlsx)", buffer, "Auditoria_10.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary")
+        st.download_button("Baixar Excel (.xlsx)", buffer, "Auditoria_11.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", type="primary")
