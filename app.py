@@ -19,11 +19,11 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("Sistema de Auditoria Fiscal 13.2 (Correção 'Busca')")
-st.caption("Cruzamento: XML vs LCP 214 (Lista Mestra) vs Tabela TIPI (Auto-Carregamento)")
+st.title("Sistema de Auditoria Fiscal 13.3 (Layout Ajustado)")
+st.caption("Novo CST posicionado antes do Código de Classificação")
 st.divider()
 
-# --- 2. LISTA MESTRA (GARANTIA DE LEITURA) ---
+# --- 2. LISTA MESTRA ---
 TEXTO_MESTRA = """
 ANEXO I (ZERO)
 1006.20 1006.30 1006.40.00 (Arroz)
@@ -82,21 +82,14 @@ CONFIG_ANEXOS = {
     "ANEXO XV": {"Descricao": "Hortifruti e Ovos", "cClassTrib": "200003", "CST": "40", "Status": "ZERO (Anexo XV)", "Caps": ["04","07","08"]}
 }
 
-# --- 4. CARREGAMENTO DE DADOS ---
-
+# --- 4. CARREGAMENTO ---
 @st.cache_data
 def carregar_tipi(uploaded_file=None):
-    """Carrega TIPI. Tenta arquivo local 'tipi.xlsx' se nenhum upload for feito."""
-    arquivo_para_ler = None
-    if uploaded_file is not None: arquivo_para_ler = uploaded_file
-    elif os.path.exists("tipi.xlsx"): arquivo_para_ler = "tipi.xlsx"
-    
-    if arquivo_para_ler is None: return pd.DataFrame()
-
+    arquivo = uploaded_file if uploaded_file else ("tipi.xlsx" if os.path.exists("tipi.xlsx") else None)
+    if not arquivo: return pd.DataFrame()
     try:
-        try: df = pd.read_excel(arquivo_para_ler, dtype=str)
-        except: df = pd.read_csv(arquivo_para_ler, dtype=str, on_bad_lines='skip')
-            
+        try: df = pd.read_excel(arquivo, dtype=str)
+        except: df = pd.read_csv(arquivo, dtype=str, on_bad_lines='skip')
         for col in df.columns: df[col] = df[col].astype(str).str.strip()
         df['NCM_Limpo'] = df.iloc[:, 0].apply(lambda x: re.sub(r'[^0-9]', '', str(x)))
         df = df[df['NCM_Limpo'].str.len().isin([4, 8])]
@@ -105,20 +98,15 @@ def carregar_tipi(uploaded_file=None):
 
 @st.cache_data
 def carregar_json_regras():
-    # --- AQUI ESTAVA O PROBLEMA, CORRIGIDO AGORA ---
     try:
         with open('classificacao_tributaria.json', 'r', encoding='utf-8') as f:
             dados = json.load(f)
             df = pd.DataFrame(dados)
-            # Cria coluna de busca se ela não existir
             if 'Descrição do Código da Classificação Tributária' in df.columns:
                 df['Busca'] = df['Descrição do Código da Classificação Tributária'].str.lower()
-            else:
-                df['Busca'] = "" # Cria vazia para não dar erro
+            else: df['Busca'] = ""
             return df
-    except: 
-        # Retorna DataFrame vazio com a coluna 'Busca' para evitar KeyError
-        return pd.DataFrame(columns=['Busca'])
+    except: return pd.DataFrame(columns=['Busca'])
 
 def extrair_regras(texto_fonte, mapa_existente, nome_fonte):
     texto = re.sub(r'\s+', ' ', texto_fonte)
@@ -133,16 +121,14 @@ def extrair_regras(texto_fonte, mapa_existente, nome_fonte):
         inicio = anexos_pos[i][0]
         fim = anexos_pos[i+1][0] if i+1 < len(anexos_pos) else len(texto)
         bloco = texto[inicio:fim]
-        
         ncms_raw = re.findall(r'(?<!\d)(\d{2,4}\.?\d{0,2}\.?\d{0,2})(?!\d)', bloco)
-        caps_permitidos = CONFIG_ANEXOS[nome_anexo]["Caps"]
-        
+        caps = CONFIG_ANEXOS[nome_anexo]["Caps"]
         for codigo in ncms_raw:
-            c_limpo = codigo.replace('.', '')
-            if len(c_limpo) in [4, 6, 8]:
-                if not caps_permitidos or any(c_limpo.startswith(cap) for cap in caps_permitidos):
-                    if c_limpo not in mapa_existente or nome_fonte == "BACKUP":
-                        mapa_existente[c_limpo] = nome_anexo
+            c = codigo.replace('.', '')
+            if len(c) in [4,6,8]:
+                if not caps or any(c.startswith(cap) for cap in caps):
+                    if c not in mapa_existente or nome_fonte == "BACKUP":
+                        mapa_existente[c] = nome_anexo
     return mapa_existente
 
 @st.cache_data
@@ -157,13 +143,10 @@ def carregar_base_legal():
     mapa = extrair_regras(TEXTO_MESTRA, mapa, "BACKUP")
     return mapa
 
-# --- 5. LÓGICA PRINCIPAL ---
-
+# --- 5. LÓGICA ---
 def verificar_seletivo(ncm):
     ncm = str(ncm).replace('.', '')
-    if any(ncm.startswith(p) for p in ['2203','2204','2205','2206','2207','2208','24','87','93']):
-        return True
-    return False
+    return any(ncm.startswith(p) for p in ['2203','2204','2205','2206','2207','2208','24','87','93'])
 
 def classificar_item(row, mapa_regras, df_json, df_tipi):
     ncm = str(row['NCM']).replace('.', '')
@@ -175,16 +158,13 @@ def classificar_item(row, mapa_regras, df_json, df_tipi):
         elif ncm[:4] in df_tipi.index: validacao = "✅ Posição Válida"
 
     if verificar_seletivo(ncm):
-        return '000001', f'Produto sujeito a Imposto Seletivo', 'ALERTA SELETIVO', '02', 'Trava Segurança', validacao
+        return '000001', f'Produto sujeito a Imposto Seletivo', 'ALERTA SELETIVO', '02', 'Trava', validacao
 
-    anexo = None
-    origem = "Regra Geral"
-    possibilidades = [ncm, ncm[:6], ncm[:4]]
-    
-    for tentativa in possibilidades:
-        if tentativa in mapa_regras:
-            anexo = mapa_regras[tentativa]
-            origem = f"{anexo} (Via {tentativa})"
+    anexo, origem = None, "Regra Geral"
+    for tent in [ncm, ncm[:6], ncm[:4]]:
+        if tent in mapa_regras:
+            anexo = mapa_regras[tent]
+            origem = f"{anexo} (Via {tent})"
             break
             
     if cfop.startswith('7'): 
@@ -195,11 +175,7 @@ def classificar_item(row, mapa_regras, df_json, df_tipi):
         return regra['cClassTrib'], f"{regra['Descricao']} - {origem}", regra['Status'], regra['CST'], origem, validacao
     
     else:
-        # Fallback JSON (Agora seguro contra KeyError)
-        termo = "tributação integral"
-        if ncm.startswith('30'): termo = "medicamentos"
-        elif ncm.startswith('10'): termo = "cesta básica"
-        
+        termo = "medicamentos" if ncm.startswith('30') else ("cesta básica" if ncm.startswith('10') else "tributação integral")
         if not df_json.empty and 'Busca' in df_json.columns:
             res = df_json[df_json['Busca'].str.contains(termo, na=False)]
             if not res.empty:
@@ -216,18 +192,16 @@ with st.sidebar:
     uploaded_xmls = st.file_uploader("1. XMLs de Venda", type=['xml'], accept_multiple_files=True)
     uploaded_tipi = st.file_uploader("2. Atualizar TIPI (Opcional)", type=['xlsx', 'csv'])
     st.divider()
-    with st.spinner("Iniciando sistema..."):
+    with st.spinner("Carregando..."):
         mapa_lei = carregar_base_legal()
         df_tipi = carregar_tipi(uploaded_tipi) 
     st.success(f"⚖️ Lei Mapeada: {len(mapa_lei)} regras")
     if not df_tipi.empty: st.success(f"📚 TIPI Carregada: {len(df_tipi)} códigos")
-    else: st.warning("TIPI não encontrada na pasta.")
 
 if uploaded_xmls:
-    if df_regras_json.empty: st.warning("Atenção: Arquivo JSON de regras não carregado.")
     lista_itens = []
     ns = {'ns': 'http://www.portalfiscal.inf.br/nfe'}
-    progresso = st.progress(0)
+    prog = st.progress(0)
     
     for i, arquivo in enumerate(uploaded_xmls):
         try:
@@ -244,41 +218,60 @@ if uploaded_xmls:
                     'Valor': float(prod.find('ns:vProd', ns).text)
                 })
         except: continue
-        progresso.progress((i+1)/len(uploaded_xmls))
+        prog.progress((i+1)/len(uploaded_xmls))
     
     if lista_itens:
         df_base = pd.DataFrame(lista_itens)
         df_analise = df_base.drop_duplicates(subset=['NCM', 'Produto', 'CFOP']).copy()
         
+        # O apply retorna na ordem: cClassTrib, Descrição, Status, Novo CST, Origem, TIPI
+        # Note que a ordem aqui na atribuição TEM que casar com o return da função
         resultados = df_analise.apply(
             lambda row: classificar_item(row, mapa_lei, df_regras_json, df_tipi), 
             axis=1, result_type='expand'
         )
         
-        df_analise[['cClassTrib', 'Descrição', 'Status', 'CST', 'Origem Legal', 'Validação TIPI']] = resultados
+        # Atribui os resultados às colunas do DataFrame
+        df_analise[['cClassTrib', 'Descrição', 'Status', 'Novo CST', 'Origem Legal', 'Validação TIPI']] = resultados
         
-        st.write("### 📊 Auditoria Fiscal 13.2")
+        # --- REORDENAÇÃO DAS COLUNAS (AQUI É A MÁGICA) ---
+        colunas_ordenadas = [
+            'Chave NFe', 
+            'NCM', 
+            'Produto', 
+            'CFOP', 
+            'Valor', 
+            'Novo CST',       # <--- Agora antes do cClassTrib
+            'cClassTrib', 
+            'Descrição', 
+            'Status', 
+            'Origem Legal', 
+            'Validação TIPI'
+        ]
+        
+        # Filtra e ordena o DataFrame final
+        df_final = df_analise[colunas_ordenadas]
+        
+        st.write("### 📊 Auditoria Fiscal")
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Itens", len(df_analise))
-        c2.metric("Na Lei", len(df_analise[df_analise['Origem Legal'].str.contains("Anexo")]))
-        n_erros_ncm = len(df_analise[df_analise['Validação TIPI'].str.contains("não cadastrado")])
-        c3.metric("Erros NCM", n_erros_ncm, delta="Atenção" if n_erros_ncm > 0 else None, delta_color="inverse")
-        n_alertas = len(df_analise[df_analise['Status'] == "ALERTA SELETIVO"])
-        c4.metric("Seletivo", n_alertas, delta="Bloqueado" if n_alertas > 0 else None, delta_color="inverse")
+        c1.metric("Itens", len(df_final))
+        c2.metric("Na Lei", len(df_final[df_final['Origem Legal'].str.contains("Anexo")]))
+        n_erros = len(df_final[df_final['Validação TIPI'].str.contains("não cadastrado")])
+        c3.metric("Erros NCM", n_erros, delta="Atenção" if n_erros > 0 else None, delta_color="inverse")
+        n_is = len(df_final[df_final['Status'] == "ALERTA SELETIVO"])
+        c4.metric("Seletivo", n_is, delta="Bloqueado" if n_is > 0 else None, delta_color="inverse")
         
-        tab1, tab2, tab3 = st.tabs(["Geral", "Destaques Lei", "Erros de Cadastro"])
-        with tab1: st.dataframe(df_analise, use_container_width=True)
-        with tab2: st.dataframe(df_analise[df_analise['Origem Legal'].str.contains("Anexo")], use_container_width=True)
+        tab1, tab2, tab3 = st.tabs(["Auditoria Completa", "Destaques Lei", "Erros TIPI"])
+        with tab1: st.dataframe(df_final, use_container_width=True)
+        with tab2: st.dataframe(df_final[df_final['Origem Legal'].str.contains("Anexo")], use_container_width=True)
         with tab3: 
-            if not df_tipi.empty:
-                st.dataframe(df_analise[df_analise['Validação TIPI'].str.contains("não cadastrado")], use_container_width=True)
-            else:
-                st.info("Carregue a TIPI para ver erros.")
+            if not df_tipi.empty: st.dataframe(df_final[df_final['Validação TIPI'].str.contains("não cadastrado")], use_container_width=True)
+            else: st.info("TIPI não carregada.")
 
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-            df_analise.to_excel(writer, index=False, sheet_name="Auditoria")
+            df_final.to_excel(writer, index=False, sheet_name="Auditoria")
             if not df_tipi.empty:
-                df_analise[df_analise['Validação TIPI'].str.contains("não cadastrado")].to_excel(writer, index=False, sheet_name="Erros NCM")
+                df_final[df_final['Validação TIPI'].str.contains("não cadastrado")].to_excel(writer, index=False, sheet_name="Erros NCM")
         
-        st.download_button("📥 Baixar Relatório Final (.xlsx)", buffer, "Auditoria_Nascel_v13_2.xlsx", "primary")
+        st.download_button("📥 Baixar Relatório Final (.xlsx)", buffer, "Auditoria_Nascel_v13_3.xlsx", "primary")
