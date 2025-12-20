@@ -4,29 +4,16 @@ import xml.etree.ElementTree as ET
 import re
 import io
 
-# --- 1. MAPA DE INTELIGÊNCIA (Baseado no seu JSON) ---
-# Isso garante que o CST seja exato, mesmo se o arquivo falhar.
+# --- 1. MAPA DE INTELIGÊNCIA (Blindagem CST) ---
 MAPA_CST_CORRETO = {
-    # Cesta Básica / Alimentos
-    "200003": "200", 
-    # Dispositivos Médicos
-    "200005": "200", "200004": "200", "200030": "200",
-    # Medicamentos
-    "200009": "200", "200010": "200", "200032": "200",
-    # Higiene
-    "200035": "200",
-    # Hortifruti
-    "200014": "200",
-    # Padrão / Integral
-    "000001": "000",
-    # Imunes / Exportação
-    "410004": "410", 
-    # Outros mapeados no seu JSON
+    "200003": "200", "200005": "200", "200004": "200", "200030": "200",
+    "200009": "200", "200010": "200", "200032": "200", "200035": "200",
+    "200014": "200", "000001": "000", "410004": "410", 
     "000002": "000", "000003": "000", "010001": "010", "011001": "011",
     "200001": "200", "200002": "200", "400001": "400", "410001": "410"
 }
 
-# --- 2. TEXTO MESTRA (MANTIDO) ---
+# --- 2. DADOS E REGRAS ---
 TEXTO_MESTRA = """
 ANEXO I (ZERO)
 1006.20 1006.30 1006.40.00 0401.10.10 0401.10.90 0401.20.10 0401.20.90 0401.40.10 0401.50.10
@@ -53,21 +40,20 @@ ANEXO XV (ZERO)
 0407.2 0701 0702 0703 0704 0705 0706 0708 0709 0710 0803 0804 0805 0806 0807 0808 0809 0810 0811 0714 0801
 """
 
-# --- 3. CONFIGURAÇÃO TRIBUTÁRIA ---
 CONFIG_ANEXOS = {
-    "ANEXO I":   {"Descricao": "Cesta Básica Nacional", "cClassTrib": "200003", "Reducao": 1.0, "Status": "ZERO (Anexo I)", "Caps": []},
-    "ANEXO IV":  {"Descricao": "Dispositivos Médicos", "cClassTrib": "200005", "Reducao": 0.6, "Status": "REDUZIDA 60% (Anexo IV)", "Caps": ["30","90"]},
-    "ANEXO VII": {"Descricao": "Alimentos Reduzidos", "cClassTrib": "200003", "Reducao": 0.6, "Status": "REDUZIDA 60% (Anexo VII)", "Caps": ["03","04","07","08","10","11","12","15","16","19","20","21","22"]},
-    "ANEXO VIII":{"Descricao": "Higiene Pessoal/Limp", "cClassTrib": "200035", "Reducao": 0.6, "Status": "REDUZIDA 60% (Anexo VIII)", "Caps": ["33","34","48","96"]},
-    "ANEXO XII": {"Descricao": "Dispositivos Médicos (Z)", "cClassTrib": "200005", "Reducao": 1.0, "Status": "ZERO (Anexo XII)", "Caps": ["90"]},
-    "ANEXO XIV": {"Descricao": "Medicamentos (Zero)", "cClassTrib": "200009", "Reducao": 1.0, "Status": "ZERO (Anexo XIV)", "Caps": ["30"]},
-    "ANEXO XV":  {"Descricao": "Hortifruti e Ovos", "cClassTrib": "200003", "Reducao": 1.0, "Status": "ZERO (Anexo XV)", "Caps": ["04","06","07","08"]}
+    "ANEXO I":   {"Descricao": "Cesta Básica Nacional", "cClassTrib": "200003", "Reducao": 1.0, "CST_Default": "200", "Status": "ZERO (Anexo I)", "Caps": []},
+    "ANEXO IV":  {"Descricao": "Dispositivos Médicos", "cClassTrib": "200005", "Reducao": 0.6, "CST_Default": "200", "Status": "REDUZIDA 60% (Anexo IV)", "Caps": ["30","90"]},
+    "ANEXO VII": {"Descricao": "Alimentos Reduzidos", "cClassTrib": "200003", "Reducao": 0.6, "CST_Default": "200", "Status": "REDUZIDA 60% (Anexo VII)", "Caps": ["03","04","07","08","10","11","12","15","16","19","20","21","22"]},
+    "ANEXO VIII":{"Descricao": "Higiene Pessoal/Limp", "cClassTrib": "200035", "Reducao": 0.6, "CST_Default": "200", "Status": "REDUZIDA 60% (Anexo VIII)", "Caps": ["33","34","48","96"]},
+    "ANEXO XII": {"Descricao": "Dispositivos Médicos (Z)", "cClassTrib": "200005", "Reducao": 1.0, "CST_Default": "200", "Status": "ZERO (Anexo XII)", "Caps": ["90"]},
+    "ANEXO XIV": {"Descricao": "Medicamentos (Zero)", "cClassTrib": "200009", "Reducao": 1.0, "CST_Default": "200", "Status": "ZERO (Anexo XIV)", "Caps": ["30"]},
+    "ANEXO XV":  {"Descricao": "Hortifruti e Ovos", "cClassTrib": "200003", "Reducao": 1.0, "CST_Default": "200", "Status": "ZERO (Anexo XV)", "Caps": ["04","06","07","08"]}
 }
 
 def carregar_tipi(uploaded_file=None):
+    arquivo = uploaded_file if uploaded_file else ("tipi.xlsx" if os.path.exists("tipi.xlsx") else None)
+    if not arquivo: return pd.DataFrame()
     try:
-        arquivo = uploaded_file if uploaded_file else ("tipi.xlsx" if os.path.exists("tipi.xlsx") else None)
-        if not arquivo: return pd.DataFrame()
         try: df = pd.read_excel(arquivo, dtype=str)
         except: df = pd.read_csv(arquivo, dtype=str, on_bad_lines='skip')
         df['NCM_Limpo'] = df.iloc[:, 0].apply(lambda x: re.sub(r'[^0-9]', '', str(x)))
@@ -114,7 +100,6 @@ def carregar_base_legal():
     mapa = {}
     try:
         url = "https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp214.htm"
-        # Tenta site, se falhar, usa texto mestra
         pass
     except: pass
     mapa = extrair_regras(TEXTO_MESTRA, mapa, "BACKUP")
@@ -128,19 +113,9 @@ def verificar_seletivo(ncm):
     return any(ncm.startswith(p) for p in ['2203','2204','2205','2206','2207','2208','24','87','93'])
 
 def obter_cst_final(c_class_trib, df_json):
-    """
-    Lógica de Prioridade:
-    1. Busca no Dicionário Interno (Hardcoded - Mais Seguro)
-    2. Busca no JSON carregado (Se houver)
-    3. Retorna '901' (Genérico) se falhar tudo.
-    """
     c_class_trib = str(c_class_trib).strip()
-    
-    # 1. Mapa Interno
     if c_class_trib in MAPA_CST_CORRETO:
         return MAPA_CST_CORRETO[c_class_trib]
-        
-    # 2. JSON Externo
     if not df_json.empty:
         col_class = 'Código da Classificação Tributária'
         col_cst = 'Código da Situação Tributária'
@@ -148,11 +123,9 @@ def obter_cst_final(c_class_trib, df_json):
             match = df_json[df_json[col_class].str.strip() == c_class_trib]
             if not match.empty:
                 return str(match.iloc[0][col_cst]).strip()
-    
-    # 3. Fallback
-    return '000' # Padrão Tributado se não achar regra
+    return '000'
 
-def classificar_item(row, mapa_regras, df_json, df_tipi, aliquota_padrao):
+def classificar_item(row, mapa_regras, df_json, df_tipi, aliq_ibs, aliq_cbs):
     ncm = str(row['NCM']).replace('.', '')
     cfop = str(row['CFOP']).replace('.', '') if 'CFOP' in row else '0000'
     valor_prod = float(row.get('Valor', 0.0))
@@ -163,9 +136,14 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliquota_padrao):
     imposto_atual = v_icms + v_pis + v_cofins
     base_liquida = max(0, valor_prod - imposto_atual)
     
-    imposto_padrao = base_liquida * aliquota_padrao
-    imposto_futuro = imposto_padrao
-
+    # Cálculo Padrao Individual
+    ibs_padrao = base_liquida * aliq_ibs
+    cbs_padrao = base_liquida * aliq_cbs
+    
+    # Inicializa valores finais
+    v_ibs = ibs_padrao
+    v_cbs = cbs_padrao
+    
     validacao = "⚠️ NCM Ausente (TIPI)"
     if not df_tipi.empty:
         if ncm in df_tipi.index: validacao = "✅ NCM Válido"
@@ -173,7 +151,7 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliquota_padrao):
 
     # Seletivo
     if verificar_seletivo(ncm):
-        return '000001', 'Produto sujeito a Seletivo', 'ALERTA SELETIVO', '002', 'Trava', validacao, imposto_atual, imposto_padrao
+        return '000001', 'Produto sujeito a Seletivo', 'ALERTA SELETIVO', '002', 'Trava', validacao, imposto_atual, v_ibs+v_cbs, v_ibs, v_cbs
 
     anexo, origem = None, "Regra Geral"
     for tent in [ncm, ncm[:6], ncm[:4], ncm[:2]]:
@@ -185,18 +163,21 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliquota_padrao):
     # Exportação / Imune
     if cfop.startswith('7') or cfop.startswith('3'): 
         cst = obter_cst_final("410004", df_json)
-        return '410004', 'Comércio Exterior', 'IMUNE/SUSPENSO', cst, 'CFOP', validacao, 0.0, 0.0
+        return '410004', 'Comércio Exterior', 'IMUNE/SUSPENSO', cst, 'CFOP', validacao, 0.0, 0.0, 0.0, 0.0
         
     elif anexo:
         regra = CONFIG_ANEXOS[anexo]
         cClassTrib = regra['cClassTrib']
         fator = regra.get('Reducao', 0.0)
-        imposto_futuro = imposto_padrao * (1 - fator)
         
-        # BUSCA O CST CORRETO
+        # Aplica Redução nas duas pontas
+        v_ibs = ibs_padrao * (1 - fator)
+        v_cbs = cbs_padrao * (1 - fator)
+        imposto_futuro = v_ibs + v_cbs
+        
         cst_final = obter_cst_final(cClassTrib, df_json)
         
-        return cClassTrib, f"{regra['Descricao']} - {origem}", regra['Status'], cst_final, origem, validacao, imposto_atual, imposto_futuro
+        return cClassTrib, f"{regra['Descricao']} - {origem}", regra['Status'], cst_final, origem, validacao, imposto_atual, imposto_futuro, v_ibs, v_cbs
     
     else:
         # Fallback Texto
@@ -206,10 +187,10 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliquota_padrao):
             if not res.empty:
                 cClassTrib = res.iloc[0]['Código da Classificação Tributária']
                 cst_json = res.iloc[0].get('Código da Situação Tributária', '000')
-                return cClassTrib, res.iloc[0]['Descrição do Código da Classificação Tributária'], "SUGESTAO JSON", cst_json, origem, validacao, imposto_atual, imposto_padrao
+                return cClassTrib, res.iloc[0]['Descrição do Código da Classificação Tributária'], "SUGESTAO JSON", cst_json, origem, validacao, imposto_atual, v_ibs+v_cbs, v_ibs, v_cbs
 
     # Padrão: 000
-    return '000001', 'Padrão - Tributação Integral', 'PADRAO', '000', origem, validacao, imposto_atual, imposto_padrao
+    return '000001', 'Padrão - Tributação Integral', 'PADRAO', '000', origem, validacao, imposto_atual, v_ibs+v_cbs, v_ibs, v_cbs
 
 # --- PARSERS XML/SPED (MANTIDOS) ---
 def extrair_nome_empresa_xml(tree, ns):

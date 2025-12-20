@@ -3,6 +3,10 @@ import pandas as pd
 import xml.etree.ElementTree as ET
 import io
 import motor 
+import importlib
+
+# FORÇA O SISTEMA A LER O MOTOR NOVO (CACHE FIX)
+importlib.reload(motor)
 
 # --- CONFIGURAÇÃO INICIAL ---
 st.set_page_config(
@@ -12,7 +16,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# --- ESTADO (SESSION STATE) ---
+# --- ESTADO ---
 if 'vendas_df' not in st.session_state: st.session_state.vendas_df = pd.DataFrame()
 if 'compras_df' not in st.session_state: st.session_state.compras_df = pd.DataFrame()
 if 'estoque_df' not in st.session_state: st.session_state.estoque_df = pd.DataFrame()
@@ -26,38 +30,22 @@ def reset_all():
     st.session_state.empresa_nome = "Nenhuma Empresa"
     st.session_state.uploader_key += 1
 
-# --- CSS PROFISSIONAL ---
+# --- CSS ---
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
     .stApp { background-color: #F8F9FA; }
     html, body, [class*="css"] { font-family: 'Inter', sans-serif; color: #2C3E50; }
-    
-    /* SIDEBAR */
     section[data-testid="stSidebar"] { background-color: #FFFFFF !important; border-right: 1px solid #E0E0E0; }
     section[data-testid="stSidebar"] * { color: #2C3E50 !important; }
-    
-    /* HEADER */
     .main-header { font-size: 2.5rem; font-weight: 800; color: #1a252f; text-align: center; margin-top: 20px;}
     .sub-header { font-size: 1.1rem; color: #7F8C8D; text-align: center; margin-bottom: 30px; }
-    .company-badge { 
-        background-color: #E67E22; color: white; padding: 5px 20px; border-radius: 20px; 
-        font-weight: bold; font-size: 1rem; display: block; margin: 0 auto 20px auto; width: fit-content;
-    }
-
-    /* UPLOAD CARDS */
+    .company-badge { background-color: #E67E22; color: white; padding: 5px 20px; border-radius: 20px; font-weight: bold; font-size: 1rem; display: block; margin: 0 auto 20px auto; width: fit-content; }
     .upload-title { font-weight: 700; color: #2C3E50; margin-bottom: 5px; font-size: 1.1rem; }
     .upload-desc { font-size: 0.85rem; color: #7F8C8D; margin-bottom: 10px; }
-
-    /* METRICS */
-    div[data-testid="stMetric"] { 
-        background-color: #FFFFFF !important; border: 1px solid #E0E0E0; border-radius: 12px; 
-        padding: 15px; border-left: 6px solid #E67E22; 
-    }
+    div[data-testid="stMetric"] { background-color: #FFFFFF !important; border: 1px solid #E0E0E0; border-radius: 12px; padding: 15px; border-left: 6px solid #E67E22; }
     div[data-testid="stMetricLabel"] p { color: #7F8C8D !important; }
     div[data-testid="stMetricValue"] div { color: #2C3E50 !important; }
-
-    /* BOTÕES */
     div.stButton > button[kind="primary"] { background-color: #E67E22 !important; color: white !important; width: 100%; }
     div.stButton > button[kind="secondary"] { background-color: #ECF0F1 !important; color: #2C3E50 !important; width: 100%; border: 1px solid #BDC3C7 !important;}
     </style>
@@ -72,11 +60,15 @@ def carregar_bases():
 def carregar_tipi_cache(file):
     return motor.carregar_tipi(file)
 
-# --- BARRA LATERAL ---
+# --- SIDEBAR (INPUTS DUPLOS) ---
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/3029/3029337.png", width=50)
-    st.markdown("### ⚙️ Configurações")
-    aliquota_input = st.number_input("Alíquota IBS/CBS (%)", 0.0, 100.0, 26.5, 0.5)
+    st.markdown("### ⚙️ Alíquotas de Referência")
+    
+    # NOVOS INPUTS SEPARADOS
+    c1, c2 = st.columns(2)
+    with c1: aliq_ibs = st.number_input("IBS (%)", 0.0, 50.0, 17.7, 0.1)
+    with c2: aliq_cbs = st.number_input("CBS (%)", 0.0, 50.0, 8.8, 0.1)
     
     st.divider()
     with st.expander("Atualizar TIPI / Regras"):
@@ -93,7 +85,7 @@ with st.sidebar:
     mapa_lei, df_regras_json = carregar_bases()
     df_tipi = carregar_tipi_cache(uploaded_tipi)
 
-# --- CORPO PRINCIPAL ---
+# --- HEADER ---
 st.markdown('<div class="main-header">cClass Auditor AI</div>', unsafe_allow_html=True)
 if st.session_state.empresa_nome != "Nenhuma Empresa":
     st.markdown(f'<div class="company-badge">🏢 {st.session_state.empresa_nome}</div>', unsafe_allow_html=True)
@@ -159,76 +151,66 @@ else:
             st.rerun()
 
 # --- MOTOR DE AUDITORIA ---
-def auditar_df(df, aliquota):
+def auditar_df(df, a_ibs, a_cbs):
     if df.empty: return df
+    # Passa as DUAS alíquotas para o motor
     res = df.apply(
-        lambda row: motor.classificar_item(row, mapa_lei, df_regras_json, df_tipi, aliquota), 
+        lambda row: motor.classificar_item(row, mapa_lei, df_regras_json, df_tipi, a_ibs, a_cbs), 
         axis=1, result_type='expand'
     )
-    df[['cClassTrib', 'DescRegra', 'Status', 'Novo CST', 'Origem Legal', 'Validação TIPI', 'Carga Atual', 'Carga Projetada']] = res
+    # Recebe os novos campos vIBS e vCBS
+    df[['cClassTrib', 'DescRegra', 'Status', 'Novo CST', 'Origem Legal', 'Validação TIPI', 'Carga Atual', 'Carga Projetada', 'vIBS', 'vCBS']] = res
     return df
 
-df_vendas_aud = auditar_df(st.session_state.vendas_df.copy(), aliquota_input/100)
-df_compras_aud = auditar_df(st.session_state.compras_df.copy(), aliquota_input/100)
-df_estoque_aud = auditar_df(st.session_state.estoque_df.copy(), aliquota_input/100)
+# Converte inputs de % para decimal (17.7 -> 0.177)
+df_vendas_aud = auditar_df(st.session_state.vendas_df.copy(), aliq_ibs/100, aliq_cbs/100)
+df_compras_aud = auditar_df(st.session_state.compras_df.copy(), aliq_ibs/100, aliq_cbs/100)
+df_estoque_aud = auditar_df(st.session_state.estoque_df.copy(), aliq_ibs/100, aliq_cbs/100)
 
 # --- VISUALIZAÇÃO ---
 tem_dados = not df_vendas_aud.empty or not df_compras_aud.empty or not df_estoque_aud.empty
 
 if tem_dados:
-    # Definição das Colunas conforme solicitado
+    # COLUNAS ESTRATÉGICAS - AGORA COM vIBS e vCBS
     cols_ordenadas = [
         'Cód. Produto', 'Descrição Produto', 'NCM', 'CFOP', 'Novo CST', 'cClassTrib', 
-        'DescRegra', 'Origem Legal', 'Valor', 'vICMS', 'vPIS', 'vCOFINS', 
-        'Carga Atual', 'Carga Projetada', 'Validação TIPI'
+        'DescRegra', 'Valor', 'vICMS', 'vPIS', 'vCOFINS', 
+        'Carga Atual', 'vIBS', 'vCBS', 'Carga Projetada', 'Validação TIPI'
     ]
     
-    # Prepara DF para exibição (Renomeando 'Produto' para 'Descrição Produto' para bater com seu pedido)
     def preparar_exibicao(df):
         if df.empty: return df
         df_view = df.rename(columns={'Produto': 'Descrição Produto'})
-        # Garante que as colunas existem (vICMS etc vem do motor)
         return df_view[cols_ordenadas]
 
-    # --- ABAS ---
     tabs = st.tabs(["📊 Resumo Executivo", "📤 Saídas (Vendas)", "📥 Entradas (Compras)", "📂 Arquivos Processados"])
 
-    # 1. ABA RESUMO (DASHBOARD)
     with tabs[0]:
         st.markdown("### Visão Geral da Apuração")
-        
-        # Totais
         debito = df_vendas_aud['Carga Projetada'].sum() if not df_vendas_aud.empty else 0
         credito = df_compras_aud['Carga Projetada'].sum() if not df_compras_aud.empty else 0
         saldo = debito - credito
         
-        # Métricas
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Débitos (Saídas)", f"R$ {debito:,.2f}", delta="Passivo", delta_color="inverse")
         st.markdown("""<style>div[data-testid="metric-container"]:nth-child(2) {border-left: 6px solid #27AE60 !important;}</style>""", unsafe_allow_html=True)
         c2.metric("Créditos (Entradas)", f"R$ {credito:,.2f}", delta="Ativo", delta_color="normal")
         c3.metric("Saldo Estimado", f"R$ {abs(saldo):,.2f}", delta="Pagar" if saldo > 0 else "Credor", delta_color="inverse")
         
-        # Auditoria (Erros)
         total_erros = 0
         if not df_vendas_aud.empty: total_erros += len(df_vendas_aud[df_vendas_aud['Validação TIPI'].str.contains("Ausente")])
         c4.metric("Alertas TIPI", total_erros, delta="Atenção" if total_erros > 0 else "OK", delta_color="inverse")
         
         st.divider()
-        g1, g2 = st.columns(2)
-        with g1:
-            st.markdown("#### Distribuição da Carga (Saídas)")
-            if not df_vendas_aud.empty:
-                st.bar_chart(df_vendas_aud['Status'].value_counts(), color="#E67E22")
-            else: st.info("Sem dados de saída.")
-            
-        with g2:
-            st.markdown("#### Impacto por Classificação")
-            if not df_vendas_aud.empty:
-                resumo_impacto = df_vendas_aud.groupby('Status')[['Carga Atual', 'Carga Projetada']].sum()
-                st.bar_chart(resumo_impacto)
+        if not df_vendas_aud.empty:
+            # Gráfico de composição IBS vs CBS
+            st.markdown("#### Composição da Carga (Saídas)")
+            total_ibs = df_vendas_aud['vIBS'].sum()
+            total_cbs = df_vendas_aud['vCBS'].sum()
+            dados_graf = pd.DataFrame({'Imposto': ['IBS (Estados/Mun)', 'CBS (Federal)'], 'Valor': [total_ibs, total_cbs]})
+            st.bar_chart(dados_graf, x='Imposto', y='Valor', color="#E67E22")
 
-    # Configuração de Colunas para as Tabelas
+    # Configuração de Colunas
     col_config = {
         "Valor": st.column_config.NumberColumn(format="R$ %.2f"),
         "vICMS": st.column_config.NumberColumn(format="R$ %.2f"),
@@ -236,38 +218,32 @@ if tem_dados:
         "vCOFINS": st.column_config.NumberColumn(format="R$ %.2f"),
         "Carga Atual": st.column_config.NumberColumn(format="R$ %.2f"),
         "Carga Projetada": st.column_config.NumberColumn(format="R$ %.2f"),
+        "vIBS": st.column_config.NumberColumn(format="R$ %.2f"),
+        "vCBS": st.column_config.NumberColumn(format="R$ %.2f"),
         "Novo CST": st.column_config.TextColumn("Novo CST", width="small"),
         "DescRegra": st.column_config.TextColumn("Regra Fiscal", width="large"),
         "Validação TIPI": st.column_config.TextColumn("TIPI", width="small"),
     }
 
-    # 2. ABA VENDAS
     with tabs[1]:
         if not df_vendas_aud.empty:
             df_view_v = preparar_exibicao(df_vendas_aud)
             st.dataframe(df_view_v, use_container_width=True, hide_index=True, column_config=col_config)
         else: st.info("Nenhuma venda carregada.")
 
-    # 3. ABA COMPRAS
     with tabs[2]:
         if not df_compras_aud.empty:
             df_view_c = preparar_exibicao(df_compras_aud)
             st.dataframe(df_view_c, use_container_width=True, hide_index=True, column_config=col_config)
         else: st.info("Nenhuma compra carregada.")
 
-    # 4. ABA ARQUIVOS (Chaves NFe)
     with tabs[3]:
         c_arq1, c_arq2 = st.columns(2)
         with c_arq1:
-            st.markdown("#### 📄 Arquivos de Saída")
-            if not df_vendas_aud.empty:
-                st.dataframe(df_vendas_aud[['Chave NFe']].drop_duplicates(), use_container_width=True, hide_index=True)
+            if not df_vendas_aud.empty: st.dataframe(df_vendas_aud[['Chave NFe']].drop_duplicates(), use_container_width=True, hide_index=True)
         with c_arq2:
-            st.markdown("#### 📄 Arquivos de Entrada")
-            if not df_compras_aud.empty:
-                st.dataframe(df_compras_aud[['Chave NFe']].drop_duplicates(), use_container_width=True, hide_index=True)
+            if not df_compras_aud.empty: st.dataframe(df_compras_aud[['Chave NFe']].drop_duplicates(), use_container_width=True, hide_index=True)
 
-    # DOWNLOAD GLOBAL
     st.markdown("---")
     st.markdown("### 📥 Exportar Laudo")
     buffer = io.BytesIO()
