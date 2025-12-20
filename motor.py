@@ -1,6 +1,8 @@
 import pandas as pd
 import json
 import xml.etree.ElementTree as ET
+import requests
+import os
 import re
 import io
 
@@ -51,6 +53,7 @@ CONFIG_ANEXOS = {
 }
 
 def carregar_tipi(uploaded_file=None):
+    # Correção: os.path precisa do import os
     arquivo = uploaded_file if uploaded_file else ("tipi.xlsx" if os.path.exists("tipi.xlsx") else None)
     if not arquivo: return pd.DataFrame()
     try:
@@ -136,11 +139,8 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliq_ibs, aliq_cbs):
     imposto_atual = v_icms + v_pis + v_cofins
     base_liquida = max(0, valor_prod - imposto_atual)
     
-    # Cálculo Padrao Individual
     ibs_padrao = base_liquida * aliq_ibs
     cbs_padrao = base_liquida * aliq_cbs
-    
-    # Inicializa valores finais
     v_ibs = ibs_padrao
     v_cbs = cbs_padrao
     
@@ -149,7 +149,6 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliq_ibs, aliq_cbs):
         if ncm in df_tipi.index: validacao = "✅ NCM Válido"
         elif ncm[:4] in df_tipi.index: validacao = "✅ Posição Válida"
 
-    # Seletivo
     if verificar_seletivo(ncm):
         return '000001', 'Produto sujeito a Seletivo', 'ALERTA SELETIVO', '002', 'Trava', validacao, imposto_atual, v_ibs+v_cbs, v_ibs, v_cbs
 
@@ -160,7 +159,6 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliq_ibs, aliq_cbs):
             origem = f"{anexo} (via {tent})"
             break
             
-    # Exportação / Imune
     if cfop.startswith('7') or cfop.startswith('3'): 
         cst = obter_cst_final("410004", df_json)
         return '410004', 'Comércio Exterior', 'IMUNE/SUSPENSO', cst, 'CFOP', validacao, 0.0, 0.0, 0.0, 0.0
@@ -170,7 +168,6 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliq_ibs, aliq_cbs):
         cClassTrib = regra['cClassTrib']
         fator = regra.get('Reducao', 0.0)
         
-        # Aplica Redução nas duas pontas
         v_ibs = ibs_padrao * (1 - fator)
         v_cbs = cbs_padrao * (1 - fator)
         imposto_futuro = v_ibs + v_cbs
@@ -180,7 +177,6 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliq_ibs, aliq_cbs):
         return cClassTrib, f"{regra['Descricao']} - {origem}", regra['Status'], cst_final, origem, validacao, imposto_atual, imposto_futuro, v_ibs, v_cbs
     
     else:
-        # Fallback Texto
         termo = "medicamentos" if ncm.startswith('30') else ("cesta básica" if ncm.startswith('10') else "tributação integral")
         if not df_json.empty and 'Busca' in df_json.columns:
             res = df_json[df_json['Busca'].str.contains(termo, na=False)]
@@ -189,10 +185,8 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliq_ibs, aliq_cbs):
                 cst_json = res.iloc[0].get('Código da Situação Tributária', '000')
                 return cClassTrib, res.iloc[0]['Descrição do Código da Classificação Tributária'], "SUGESTAO JSON", cst_json, origem, validacao, imposto_atual, v_ibs+v_cbs, v_ibs, v_cbs
 
-    # Padrão: 000
     return '000001', 'Padrão - Tributação Integral', 'PADRAO', '000', origem, validacao, imposto_atual, v_ibs+v_cbs, v_ibs, v_cbs
 
-# --- PARSERS XML/SPED (MANTIDOS) ---
 def extrair_nome_empresa_xml(tree, ns):
     root = tree.getroot()
     emit = root.find('.//ns:emit', ns)
