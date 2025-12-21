@@ -8,14 +8,17 @@ import io
 
 # --- 1. MAPA DE INTELIGÊNCIA (Blindagem CST) ---
 MAPA_CST_CORRETO = {
-    "200003": "200", "200005": "200", "200004": "200", "200030": "200",
-    "200009": "200", "200010": "200", "200032": "200", "200035": "200",
-    "200014": "200", "000001": "000", "410004": "410", 
+    # Mapeamentos diretos do seu JSON
+    "200003": "200", "200004": "200", "200005": "200", 
+    "200009": "200", "200010": "200", "200014": "200",
+    "200030": "200", "200032": "200", "200034": "200", "200035": "200",
+    "000001": "000", "410004": "410", 
+    # Fallbacks comuns
     "000002": "000", "000003": "000", "010001": "010", "011001": "011",
     "200001": "200", "200002": "200", "400001": "400", "410001": "410"
 }
 
-# --- 2. DADOS E REGRAS ---
+# --- 2. DADOS E REGRAS (TEXTO MESTRA) ---
 TEXTO_MESTRA = """
 ANEXO I (ZERO)
 1006.20 1006.30 1006.40.00 0401.10.10 0401.10.90 0401.20.10 0401.20.90 0401.40.10 0401.50.10
@@ -42,18 +45,31 @@ ANEXO XV (ZERO)
 0407.2 0701 0702 0703 0704 0705 0706 0708 0709 0710 0803 0804 0805 0806 0807 0808 0809 0810 0811 0714 0801
 """
 
+# --- 3. CONFIGURAÇÃO TRIBUTÁRIA (CORRIGIDA COM SEU JSON) ---
 CONFIG_ANEXOS = {
+    # Anexo I: Cesta Básica Nacional (Redução 100%)
     "ANEXO I":   {"Descricao": "Cesta Básica Nacional", "cClassTrib": "200003", "Reducao": 1.0, "CST_Default": "200", "Status": "ZERO (Anexo I)", "Caps": []},
+    
+    # Anexo IV: Disp Médicos 60%
     "ANEXO IV":  {"Descricao": "Dispositivos Médicos", "cClassTrib": "200005", "Reducao": 0.6, "CST_Default": "200", "Status": "REDUZIDA 60% (Anexo IV)", "Caps": ["30","90"]},
-    "ANEXO VII": {"Descricao": "Alimentos Reduzidos", "cClassTrib": "200003", "Reducao": 0.6, "CST_Default": "200", "Status": "REDUZIDA 60% (Anexo VII)", "Caps": ["03","04","07","08","10","11","12","15","16","19","20","21","22"]},
+    
+    # Anexo VII: Alimentos 60% (CÓDIGO CORRIGIDO PARA 200034)
+    "ANEXO VII": {"Descricao": "Alimentos Reduzidos", "cClassTrib": "200034", "Reducao": 0.6, "CST_Default": "200", "Status": "REDUZIDA 60% (Anexo VII)", "Caps": ["03","04","07","08","10","11","12","15","16","19","20","21","22"]},
+    
+    # Anexo VIII: Higiene 60%
     "ANEXO VIII":{"Descricao": "Higiene Pessoal/Limp", "cClassTrib": "200035", "Reducao": 0.6, "CST_Default": "200", "Status": "REDUZIDA 60% (Anexo VIII)", "Caps": ["33","34","48","96"]},
-    "ANEXO XII": {"Descricao": "Dispositivos Médicos (Z)", "cClassTrib": "200005", "Reducao": 1.0, "CST_Default": "200", "Status": "ZERO (Anexo XII)", "Caps": ["90"]},
+    
+    # Anexo XII: Disp Médicos Zero (CÓDIGO CORRIGIDO PARA 200004)
+    "ANEXO XII": {"Descricao": "Dispositivos Médicos (Z)", "cClassTrib": "200004", "Reducao": 1.0, "CST_Default": "200", "Status": "ZERO (Anexo XII)", "Caps": ["90"]},
+    
+    # Anexo XIV: Medicamentos Zero
     "ANEXO XIV": {"Descricao": "Medicamentos (Zero)", "cClassTrib": "200009", "Reducao": 1.0, "CST_Default": "200", "Status": "ZERO (Anexo XIV)", "Caps": ["30"]},
-    "ANEXO XV":  {"Descricao": "Hortifruti e Ovos", "cClassTrib": "200003", "Reducao": 1.0, "CST_Default": "200", "Status": "ZERO (Anexo XV)", "Caps": ["04","06","07","08"]}
+    
+    # Anexo XV: Hortifruti Zero (CÓDIGO CORRIGIDO PARA 200014)
+    "ANEXO XV":  {"Descricao": "Hortifruti e Ovos", "cClassTrib": "200014", "Reducao": 1.0, "CST_Default": "200", "Status": "ZERO (Anexo XV)", "Caps": ["04","06","07","08"]}
 }
 
 def carregar_tipi(uploaded_file=None):
-    # Correção: os.path precisa do import os
     arquivo = uploaded_file if uploaded_file else ("tipi.xlsx" if os.path.exists("tipi.xlsx") else None)
     if not arquivo: return pd.DataFrame()
     try:
@@ -132,23 +148,36 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliq_ibs, aliq_cbs):
     ncm = str(row['NCM']).replace('.', '')
     cfop = str(row['CFOP']).replace('.', '') if 'CFOP' in row else '0000'
     valor_prod = float(row.get('Valor', 0.0))
+    tipo_op = row.get('Tipo', 'SAIDA') # Identifica se é entrada ou saída
     
+    # Impostos antigos
     v_icms = float(row.get('vICMS', 0))
     v_pis = float(row.get('vPIS', 0))
     v_cofins = float(row.get('vCOFINS', 0))
     imposto_atual = v_icms + v_pis + v_cofins
     base_liquida = max(0, valor_prod - imposto_atual)
     
+    # Cálculo Padrão
     ibs_padrao = base_liquida * aliq_ibs
     cbs_padrao = base_liquida * aliq_cbs
     v_ibs = ibs_padrao
     v_cbs = cbs_padrao
     
+    # Validação NCM
     validacao = "⚠️ NCM Ausente (TIPI)"
     if not df_tipi.empty:
         if ncm in df_tipi.index: validacao = "✅ NCM Válido"
         elif ncm[:4] in df_tipi.index: validacao = "✅ Posição Válida"
 
+    # --- LÓGICA DE CRÉDITO PARA ENTRADAS (NOVO!) ---
+    # CFOPs de Uso/Consumo (1556/2556) ou Ativo (1551/2551) agora dão crédito pleno!
+    cfop_base = cfop[1:] # Pega '556' de '1556'
+    eh_uso_consumo = cfop_base in ['556', '407', '551', '406']
+    
+    if tipo_op == 'ENTRADA' and eh_uso_consumo:
+        return '000001', 'Crédito de Uso/Consumo ou Ativo', 'CREDITO PERMITIDO (NOVO)', '000', f'CFOP {cfop}', validacao, 0.0, v_ibs+v_cbs, v_ibs, v_cbs
+
+    # --- LÓGICA PADRÃO (SAÍDAS OU REVENDA) ---
     if verificar_seletivo(ncm):
         return '000001', 'Produto sujeito a Seletivo', 'ALERTA SELETIVO', '002', 'Trava', validacao, imposto_atual, v_ibs+v_cbs, v_ibs, v_cbs
 
@@ -177,6 +206,7 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliq_ibs, aliq_cbs):
         return cClassTrib, f"{regra['Descricao']} - {origem}", regra['Status'], cst_final, origem, validacao, imposto_atual, imposto_futuro, v_ibs, v_cbs
     
     else:
+        # Fallback Texto
         termo = "medicamentos" if ncm.startswith('30') else ("cesta básica" if ncm.startswith('10') else "tributação integral")
         if not df_json.empty and 'Busca' in df_json.columns:
             res = df_json[df_json['Busca'].str.contains(termo, na=False)]
@@ -187,6 +217,7 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliq_ibs, aliq_cbs):
 
     return '000001', 'Padrão - Tributação Integral', 'PADRAO', '000', origem, validacao, imposto_atual, v_ibs+v_cbs, v_ibs, v_cbs
 
+# --- PARSERS XML/SPED (MANTIDOS) ---
 def extrair_nome_empresa_xml(tree, ns):
     root = tree.getroot()
     emit = root.find('.//ns:emit', ns)
