@@ -32,18 +32,23 @@ def reset_all():
     st.session_state.empresa_nome = "Nenhuma Empresa"
     st.session_state.uploader_key += 1
 
-# --- CSS ---
+# --- CSS (AQUI ESTÁ A MÁGICA VISUAL) ---
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
     .stApp { background-color: #F8F9FA; }
     html, body, [class*="css"] { font-family: 'Inter', sans-serif; color: #2C3E50; }
+    
+    /* Esconde a lista gigante de arquivos carregados (O TRUQUE) */
+    div[data-testid='stUploadedFile'] { display: none; }
+    section[data-testid="stFileUploader"] div[role="list"] { display: none !important; }
+    
+    /* Estilos Gerais */
     section[data-testid="stSidebar"] { background-color: #FFFFFF !important; border-right: 1px solid #E0E0E0; }
     section[data-testid="stSidebar"] * { color: #2C3E50 !important; }
     .main-header { font-size: 2.5rem; font-weight: 800; color: #1a252f; text-align: center; margin-top: 20px;}
     .company-badge { background-color: #E67E22; color: white; padding: 5px 20px; border-radius: 20px; font-weight: bold; font-size: 1rem; display: block; margin: 0 auto 20px auto; width: fit-content; }
     .upload-title { font-weight: 700; color: #2C3E50; margin-bottom: 5px; font-size: 1.1rem; }
-    .upload-desc { font-size: 0.85rem; color: #7F8C8D; margin-bottom: 10px; }
     div[data-testid="stMetric"] { background-color: #FFFFFF !important; border: 1px solid #E0E0E0; border-radius: 12px; padding: 15px; border-left: 6px solid #E67E22; }
     div.stButton > button[kind="primary"] { background-color: #E67E22 !important; color: white !important; width: 100%; }
     div.stButton > button[kind="secondary"] { background-color: #ECF0F1 !important; color: #2C3E50 !important; width: 100%; border: 1px solid #BDC3C7 !important;}
@@ -97,12 +102,12 @@ def processar_arquivos_com_barra(arquivos, tipo):
     lista = []
     total_arquivos = len(arquivos)
     
-    # Cria a barra de progresso na tela
-    barra = st.progress(0, text=f"Iniciando leitura de {total_arquivos} arquivos...")
+    # Cria a barra de progresso AZUL na tela
+    barra = st.progress(0, text=f"⏳ Iniciando leitura de {total_arquivos} arquivos...")
     
     for i, arquivo in enumerate(arquivos):
-        # Atualiza a barra (i+1 porque o índice começa em 0)
         progresso = (i + 1) / total_arquivos
+        # Atualiza a barra com "Processando 5 de 50..."
         barra.progress(progresso, text=f"Processando {i+1} de {total_arquivos} - {arquivo.name}")
         
         try:
@@ -113,8 +118,7 @@ def processar_arquivos_com_barra(arquivos, tipo):
         except: 
             continue
             
-    # Limpa a barra quando termina
-    barra.empty()
+    barra.empty() # Limpa a barra ao terminar
     return lista
 
 if modo_selecionado == "📄 XML (Notas Fiscais)":
@@ -125,18 +129,22 @@ if modo_selecionado == "📄 XML (Notas Fiscais)":
     c_venda, c_compra = st.columns(2)
     with c_venda:
         st.markdown('<div class="upload-title">📤 VENDAS (Saídas)</div>', unsafe_allow_html=True)
+        # O label_visibility="collapsed" junto com o CSS vai esconder a lista
         vendas_files = st.file_uploader("Upload Vendas", type=['xml'], accept_multiple_files=True, key=f"v_{st.session_state.uploader_key}", label_visibility="collapsed")
+        if vendas_files:
+            st.info(f"📁 {len(vendas_files)} Arquivos selecionados") # Mostra resumo
+
     with c_compra:
         st.markdown('<div class="upload-title">📥 COMPRAS (Entradas)</div>', unsafe_allow_html=True)
         compras_files = st.file_uploader("Upload Compras", type=['xml'], accept_multiple_files=True, key=f"c_{st.session_state.uploader_key}", label_visibility="collapsed")
+        if compras_files:
+            st.info(f"📁 {len(compras_files)} Arquivos selecionados")
 
     if vendas_files and st.session_state.vendas_df.empty:
-        # Chama a nova função com barra
         st.session_state.vendas_df = pd.DataFrame(processar_arquivos_com_barra(vendas_files, 'SAIDA'))
         st.rerun()
 
     if compras_files and st.session_state.compras_df.empty:
-        # Chama a nova função com barra
         st.session_state.compras_df = pd.DataFrame(processar_arquivos_com_barra(compras_files, 'ENTRADA'))
         st.rerun()
 
@@ -152,7 +160,7 @@ else:
         sped_file = st.file_uploader("Upload SPED", type=['txt'], accept_multiple_files=False, key=f"s_{st.session_state.uploader_key}", label_visibility="collapsed")
 
     if sped_file and st.session_state.estoque_df.empty:
-        with st.spinner("Lendo e Processando SPED..."):
+        with st.spinner("Lendo SPED..."):
             nome, itens = motor.processar_sped_fiscal(sped_file)
             st.session_state.empresa_nome = nome
             st.session_state.estoque_df = pd.DataFrame(itens)
