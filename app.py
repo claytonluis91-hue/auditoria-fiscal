@@ -12,7 +12,7 @@ importlib.reload(relatorio)
 # --- CONFIGURAÇÃO ---
 st.set_page_config(
     page_title="cClass Auditor AI",
-    page_icon="⚖️",
+    page_icon="🟧",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -33,19 +33,45 @@ def reset_all():
     st.session_state.uploader_key += 1
     st.session_state.origem_dados = ""
 
-# --- CSS ---
+# --- CSS (VISUAL NASCEL PREMIUM) ---
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-    .stApp { background-color: #F4F6F8; }
+    .stApp { background-color: #F8F9FA; }
     html, body, [class*="css"] { font-family: 'Inter', sans-serif; color: #2C3E50; }
-    section[data-testid="stSidebar"] { background-color: #FFFFFF !important; border-right: 1px solid #DCE1E6; }
-    .header-container { background-color: #2C3E50; padding: 20px; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-    .main-header { font-size: 2rem; font-weight: 700; color: #FFFFFF; margin: 0; }
-    .sub-header { font-size: 1rem; color: #BDC3C7; margin-top: 5px; }
-    div[data-testid="stMetric"] { background-color: #FFFFFF !important; border: 1px solid #E0E0E0; border-radius: 8px; padding: 15px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+    section[data-testid="stSidebar"] { background-color: #FFFFFF !important; border-right: 1px solid #E0E0E0; }
+    
+    /* --- CABEÇALHO LINDÃO (DEGRADÊ LARANJA) --- */
+    .header-container {
+        background: linear-gradient(135deg, #E67E22 0%, #D35400 100%);
+        padding: 25px;
+        border-radius: 12px;
+        margin-bottom: 25px;
+        box-shadow: 0 4px 15px rgba(230, 126, 34, 0.2);
+        color: white;
+    }
+    .main-header { font-size: 2.2rem; font-weight: 800; color: #FFFFFF; margin: 0; letter-spacing: -1px; }
+    .sub-header { font-size: 1rem; color: #FDEBD0; margin-top: 5px; opacity: 0.9; }
+    
+    /* --- BARRA DE PROGRESSO LARANJA --- */
+    .stProgress > div > div > div > div {
+        background-color: #E67E22;
+    }
+
+    /* Cards de Métricas */
+    div[data-testid="stMetric"] { 
+        background-color: #FFFFFF !important; 
+        border: 1px solid #E0E0E0; 
+        border-radius: 10px; 
+        padding: 15px; 
+        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        border-top: 4px solid #E67E22; /* Topo Laranja */
+    }
+    
+    /* Botões */
     div.stButton > button[kind="primary"] { background-color: #E67E22 !important; color: white !important; border: none; font-weight: 600; transition: all 0.3s ease; }
-    div.stButton > button[kind="primary"]:hover { transform: scale(1.02); }
+    div.stButton > button[kind="primary"]:hover { transform: translateY(-2px); box-shadow: 0 4px 10px rgba(230, 126, 34, 0.3); }
+    
     .streamlit-expanderHeader { font-weight: 600; color: #34495E; background-color: #FFFFFF; border: 1px solid #E0E0E0; border-radius: 5px; }
     </style>
     """, unsafe_allow_html=True)
@@ -83,11 +109,11 @@ with st.sidebar:
     mapa_lei, df_regras_json = carregar_bases()
     df_tipi = carregar_tipi_cache(uploaded_tipi)
 
-# --- HEADER ---
+# --- HEADER NASCEL ---
 st.markdown("""
 <div class="header-container">
     <div class="main-header">cClass Auditor AI </div>
-    <div class="sub-header">Plataforma de Inteligência Tributária e Cruzamento SPED</div>
+    <div class="sub-header">Inteligência Fiscal & Compliance Tributário | Powered by Nascel</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -98,6 +124,7 @@ ns = {'ns': 'http://www.portalfiscal.inf.br/nfe'}
 def processar_arquivos_com_barra(arquivos, tipo):
     lista = []
     total = len(arquivos)
+    # A BARRA AGORA SERÁ LARANJA (via CSS)
     barra = st.progress(0, text=f"⏳ Iniciando leitura de {total} arquivos...")
     for i, arquivo in enumerate(arquivos):
         progresso = (i + 1) / total
@@ -111,7 +138,7 @@ def processar_arquivos_com_barra(arquivos, tipo):
     barra.empty()
     return lista
 
-# === LÓGICA DE UPLOAD UNIFICADA ===
+# === UPLOAD ===
 if modo_selecionado == "📄 XML (Notas Fiscais)":
     c_venda, c_compra = st.columns(2)
     with c_venda:
@@ -139,13 +166,10 @@ else:
 
     if sped_file and st.session_state.vendas_df.empty and st.session_state.compras_df.empty:
         with st.spinner("Processando SPED Completo (Blocos C e H)..."):
-            # O Motor agora retorna 3 coisas: Nome, Vendas e Compras
             nome, vendas, compras = motor.processar_sped_fiscal(sped_file)
-            
             st.session_state.empresa_nome = nome
             st.session_state.vendas_df = pd.DataFrame(vendas)
             st.session_state.compras_df = pd.DataFrame(compras)
-            # Se quiser usar estoque também, pode adaptar, mas por hora focamos em movimento
             st.session_state.estoque_df = pd.DataFrame() 
             st.session_state.origem_dados = "SPED Fiscal"
             st.rerun()
@@ -159,7 +183,6 @@ def auditar_df(df, a_ibs, a_cbs):
 
 df_vendas_aud = auditar_df(st.session_state.vendas_df.copy(), aliq_ibs/100, aliq_cbs/100)
 df_compras_aud = auditar_df(st.session_state.compras_df.copy(), aliq_ibs/100, aliq_cbs/100)
-# df_estoque_aud = auditar_df(...) # Não usado no modo movimento SPED por enquanto
 
 tem_dados = not df_vendas_aud.empty or not df_compras_aud.empty
 
@@ -182,6 +205,7 @@ if tem_dados:
         k1.metric("Débitos (Saídas)", f"R$ {debito:,.2f}", delta="Passivo Tributário", delta_color="off")
         st.markdown("""<style>div[data-testid="metric-container"]:nth-child(2) {border-left: 5px solid #27AE60 !important;}</style>""", unsafe_allow_html=True)
         k2.metric("Créditos (Entradas)", f"R$ {credito:,.2f}", delta="Recuperável", delta_color="normal")
+        
         cor_saldo = "#C0392B" if saldo > 0 else "#27AE60"
         st.markdown(f"""<style>div[data-testid="metric-container"]:nth-child(3) {{border-left: 5px solid {cor_saldo} !important;}}</style>""", unsafe_allow_html=True)
         k3.metric("Saldo Estimado", f"R$ {abs(saldo):,.2f}", delta="A Recolher" if saldo > 0 else "Saldo Credor", delta_color="inverse")
