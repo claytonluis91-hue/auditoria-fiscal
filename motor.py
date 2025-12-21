@@ -6,49 +6,26 @@ import os
 import re
 import io
 
-# --- 1. MAPA DE INTELIGÊNCIA (Blindagem CST) ---
+# --- 1. MAPA DE INTELIGÊNCIA (CSTs) ---
 MAPA_CST_CORRETO = {
-    # Mapeamentos diretos do seu JSON
     "200003": "200", "200004": "200", "200005": "200", 
     "200009": "200", "200010": "200", "200014": "200",
     "200030": "200", "200032": "200", "200034": "200", "200035": "200",
     "000001": "000", "410004": "410", 
-    # Fallbacks comuns
     "000002": "000", "000003": "000", "010001": "010", "011001": "011",
     "200001": "200", "200002": "200", "400001": "400", "410001": "410"
 }
 
-# --- 2. DADOS E REGRAS (TEXTO MESTRA REVISADO) ---
-# Nota: Removi do texto abaixo os NCMs citados como "exceto" na sua lista
-# para evitar que o robô os capture como regra positiva.
+# --- 2. DADOS E REGRAS (TEXTO MESTRA) ---
 TEXTO_MESTRA = """
 ANEXO I (ZERO)
-1006.20 1006.30 1006.40.00
-0401.10.10 0401.10.90 0401.20.10 0401.20.90 0401.40.10 0401.50.10
-0402.10.10 0402.10.90 0402.21.10 0402.21.20 0402.29.10 0402.29.20
-1901.10.10 1901.10.90 2106.90.90
-0405.10.00 1517.10.00
-0713.33.19 0713.33.29 0713.33.99 0713.35.90
-09.01 2101.1 1513.21.20
-1106.20.00 1903.00.00
-1102.20.00 1103.13.00
-1104.19.00 1104.23.00
-1101.00.10
-1701.14.00 1701.99.00
-1902.1
-1905.90.90 1901.20.10 1901.20.90
-1104.12.00 1104.22.00
-1102.90.00
-02.01 02.02 0206.10.00 0206.2 0210.20.00
-02.03 0206.30.00 0206.4 0209.10 0210.1
-02.04 0210.99.20 0210.99.90 0206.80.00 0206.90.00
-02.07 0209.90.00 0210.99.1
-03.02 03.03 03.04
-0406.10.10 0406.10.90 0406.20.00 0406.90.10 0406.90.20 0406.90.30
-2501.00.20 2501.00.90
-09.03
-1901.90.90
-1902.19.00
+1006.20 1006.30 1006.40.00 0401.10.10 0401.10.90 0401.20.10 0401.20.90 0401.40.10 0401.50.10
+0402.10.10 0402.10.90 0402.21.10 0402.21.20 0402.29.10 0402.29.20 1901.10.10 1901.10.90 2106.90.90
+0405.10.00 1517.10.00 0713.33.19 0713.33.29 0713.33.99 0713.35.90 09.01 2101.1 1513.21.20
+1106.20.00 1903.00.00 1102.20.00 1103.13.00 1104.19.00 1104.23.00 1101.00.10 1104.12.00 1104.22.00 1102.90.00
+1701.14.00 1701.99.00 1902.1 1905.90.90 1901.20.10 1901.20.90
+02.01 02.02 02.03 02.04 02.07 0206.2 0206.4 0210.1 03.02 03.03 03.04
+0406.10.10 0406.10.90 0406.20.00 0406.90.10 0406.90.20 0406.90.30 2501.00.20 2501.00.90 09.03
 
 ANEXO VII (RED 60%)
 0306.1 0306.3 0307 0403 2202.99.00 0409.00.00
@@ -68,25 +45,12 @@ ANEXO XV (ZERO)
 
 # --- 3. CONFIGURAÇÃO TRIBUTÁRIA ---
 CONFIG_ANEXOS = {
-    # Anexo I: Cesta Básica Nacional (Redução 100%)
     "ANEXO I":   {"Descricao": "Cesta Básica Nacional", "cClassTrib": "200003", "Reducao": 1.0, "CST_Default": "200", "Status": "ZERO (Anexo I)", "Caps": []},
-    
-    # Anexo IV: Disp Médicos 60%
     "ANEXO IV":  {"Descricao": "Dispositivos Médicos", "cClassTrib": "200005", "Reducao": 0.6, "CST_Default": "200", "Status": "REDUZIDA 60% (Anexo IV)", "Caps": ["30","90"]},
-    
-    # Anexo VII: Alimentos 60%
     "ANEXO VII": {"Descricao": "Alimentos Reduzidos", "cClassTrib": "200034", "Reducao": 0.6, "CST_Default": "200", "Status": "REDUZIDA 60% (Anexo VII)", "Caps": ["03","04","07","08","10","11","12","15","16","19","20","21","22"]},
-    
-    # Anexo VIII: Higiene 60%
     "ANEXO VIII":{"Descricao": "Higiene Pessoal/Limp", "cClassTrib": "200035", "Reducao": 0.6, "CST_Default": "200", "Status": "REDUZIDA 60% (Anexo VIII)", "Caps": ["33","34","48","96"]},
-    
-    # Anexo XII: Disp Médicos Zero
     "ANEXO XII": {"Descricao": "Dispositivos Médicos (Z)", "cClassTrib": "200004", "Reducao": 1.0, "CST_Default": "200", "Status": "ZERO (Anexo XII)", "Caps": ["90"]},
-    
-    # Anexo XIV: Medicamentos Zero
     "ANEXO XIV": {"Descricao": "Medicamentos (Zero)", "cClassTrib": "200009", "Reducao": 1.0, "CST_Default": "200", "Status": "ZERO (Anexo XIV)", "Caps": ["30"]},
-    
-    # Anexo XV: Hortifruti Zero
     "ANEXO XV":  {"Descricao": "Hortifruti e Ovos", "cClassTrib": "200014", "Reducao": 1.0, "CST_Default": "200", "Status": "ZERO (Anexo XV)", "Caps": ["04","06","07","08"]}
 }
 
@@ -126,15 +90,23 @@ def extrair_regras(texto_fonte, mapa_existente, nome_fonte):
         bloco = texto[inicio:fim]
         ncms_raw = re.findall(r'(?<!\d)(\d{2,4}\.?\d{0,2}\.?\d{0,2})(?!\d)', bloco)
         caps = CONFIG_ANEXOS[nome_anexo]["Caps"]
+        
         for codigo in ncms_raw:
             c = codigo.replace('.', '')
             if len(c) in [4,6,8]:
-                # Só cadastra se bater com os capitulos permitidos na config (segurança extra)
                 if not caps or any(c.startswith(cap) for cap in caps):
                     if c not in mapa_existente or nome_fonte == "BACKUP":
                         mapa_existente[c] = nome_anexo
-                        if len(c) == 8: mapa_existente[c[:4]] = nome_anexo
-                        if len(c) == 6: mapa_existente[c[:4]] = nome_anexo
+                        
+                        # --- CORREÇÃO DE GENERALIZAÇÃO (Versão 39.0) ---
+                        # Antes, se achava 2202.99.00, ele adicionava 2202 como pai.
+                        # Isso fazia 2202.10.00 (Refri) cair na regra.
+                        # AGORA: NÃO adicionamos pais automaticamente para 8 dígitos.
+                        # A regra deve ser explícita (ex: 20.04 no texto para pegar a posição toda).
+                        
+                        # Removemos as linhas que adicionavam 'c[:4]' automaticamente.
+                        # Apenas salvamos o código exato que está no texto.
+                        
     return mapa_existente
 
 def carregar_base_legal():
@@ -188,10 +160,9 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliq_ibs, aliq_cbs):
         if ncm in df_tipi.index: validacao = "✅ NCM Válido"
         elif ncm[:4] in df_tipi.index: validacao = "✅ Posição Válida"
 
-    # LÓGICA DE CRÉDITO PARA ENTRADAS
+    # CRÉDITO DE ENTRADA
     cfop_base = cfop[1:]
     eh_uso_consumo = cfop_base in ['556', '407', '551', '406']
-    
     if tipo_op == 'ENTRADA' and eh_uso_consumo:
         return '000001', 'Crédito de Uso/Consumo ou Ativo', 'CREDITO PERMITIDO (NOVO)', '000', f'CFOP {cfop}', validacao, 0.0, v_ibs+v_cbs, v_ibs, v_cbs
 
@@ -200,7 +171,8 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliq_ibs, aliq_cbs):
 
     anexo, origem = None, "Regra Geral"
     
-    # Busca Hierárquica: Tenta NCM Exato (8) -> 6 Dig -> 4 Dig -> 2 Dig
+    # BUSCA HIERÁRQUICA
+    # Tenta NCM exato, depois 6 digitos, depois 4 digitos, depois Capitulo
     for tent in [ncm, ncm[:6], ncm[:4], ncm[:2]]:
         if tent in mapa_regras:
             anexo = mapa_regras[tent]
@@ -236,7 +208,7 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliq_ibs, aliq_cbs):
 
     return '000001', 'Padrão - Tributação Integral', 'PADRAO', '000', origem, validacao, imposto_atual, v_ibs+v_cbs, v_ibs, v_cbs
 
-# --- PARSERS XML/SPED (MANTIDOS) ---
+# --- PARSERS (MANTIDOS) ---
 def extrair_nome_empresa_xml(tree, ns):
     root = tree.getroot()
     emit = root.find('.//ns:emit', ns)
