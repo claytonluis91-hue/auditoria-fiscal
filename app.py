@@ -4,7 +4,7 @@ import xml.etree.ElementTree as ET
 import io
 import motor 
 import importlib
-import relatorio # <--- NOVO ARQUIVO
+import relatorio
 
 # CACHE FIX
 importlib.reload(motor)
@@ -92,6 +92,31 @@ st.markdown("---")
 
 ns = {'ns': 'http://www.portalfiscal.inf.br/nfe'}
 
+# === FUNÇÃO DE PROCESSAMENTO COM BARRA DE PROGRESSO ===
+def processar_arquivos_com_barra(arquivos, tipo):
+    lista = []
+    total_arquivos = len(arquivos)
+    
+    # Cria a barra de progresso na tela
+    barra = st.progress(0, text=f"Iniciando leitura de {total_arquivos} arquivos...")
+    
+    for i, arquivo in enumerate(arquivos):
+        # Atualiza a barra (i+1 porque o índice começa em 0)
+        progresso = (i + 1) / total_arquivos
+        barra.progress(progresso, text=f"Processando {i+1} de {total_arquivos} - {arquivo.name}")
+        
+        try:
+            tree = ET.parse(arquivo)
+            if tipo == 'SAIDA' and st.session_state.empresa_nome == "Nenhuma Empresa":
+                st.session_state.empresa_nome = motor.extrair_nome_empresa_xml(tree, ns)
+            lista.extend(motor.processar_xml_detalhado(tree, ns, tipo))
+        except: 
+            continue
+            
+    # Limpa a barra quando termina
+    barra.empty()
+    return lista
+
 if modo_selecionado == "📄 XML (Notas Fiscais)":
     if not st.session_state.estoque_df.empty: 
         st.session_state.estoque_df = pd.DataFrame()
@@ -105,26 +130,15 @@ if modo_selecionado == "📄 XML (Notas Fiscais)":
         st.markdown('<div class="upload-title">📥 COMPRAS (Entradas)</div>', unsafe_allow_html=True)
         compras_files = st.file_uploader("Upload Compras", type=['xml'], accept_multiple_files=True, key=f"c_{st.session_state.uploader_key}", label_visibility="collapsed")
 
-    def processar_arquivos(arquivos, tipo):
-        lista = []
-        for arquivo in arquivos:
-            try:
-                tree = ET.parse(arquivo)
-                if tipo == 'SAIDA' and st.session_state.empresa_nome == "Nenhuma Empresa":
-                    st.session_state.empresa_nome = motor.extrair_nome_empresa_xml(tree, ns)
-                lista.extend(motor.processar_xml_detalhado(tree, ns, tipo))
-            except: continue
-        return lista
-
     if vendas_files and st.session_state.vendas_df.empty:
-        with st.spinner("Lendo Vendas..."):
-            st.session_state.vendas_df = pd.DataFrame(processar_arquivos(vendas_files, 'SAIDA'))
-            st.rerun()
+        # Chama a nova função com barra
+        st.session_state.vendas_df = pd.DataFrame(processar_arquivos_com_barra(vendas_files, 'SAIDA'))
+        st.rerun()
 
     if compras_files and st.session_state.compras_df.empty:
-        with st.spinner("Lendo Compras..."):
-            st.session_state.compras_df = pd.DataFrame(processar_arquivos(compras_files, 'ENTRADA'))
-            st.rerun()
+        # Chama a nova função com barra
+        st.session_state.compras_df = pd.DataFrame(processar_arquivos_com_barra(compras_files, 'ENTRADA'))
+        st.rerun()
 
 else:
     if not st.session_state.vendas_df.empty:
@@ -138,7 +152,7 @@ else:
         sped_file = st.file_uploader("Upload SPED", type=['txt'], accept_multiple_files=False, key=f"s_{st.session_state.uploader_key}", label_visibility="collapsed")
 
     if sped_file and st.session_state.estoque_df.empty:
-        with st.spinner("Lendo SPED..."):
+        with st.spinner("Lendo e Processando SPED..."):
             nome, itens = motor.processar_sped_fiscal(sped_file)
             st.session_state.empresa_nome = nome
             st.session_state.estoque_df = pd.DataFrame(itens)
@@ -217,11 +231,9 @@ if tem_dados:
     st.markdown("---")
     st.markdown("### 📥 Exportar Resultados")
     
-    # Colunas de Botão
     c_pdf, c_xls = st.columns(2)
     
     with c_pdf:
-        # GERAÇÃO DO PDF
         if not df_vendas_aud.empty or not df_compras_aud.empty:
             try:
                 pdf_bytes = relatorio.gerar_pdf_bytes(st.session_state.empresa_nome, df_vendas_aud, df_compras_aud)
@@ -230,7 +242,6 @@ if tem_dados:
                 st.error(f"Erro ao gerar PDF: {e}")
                 
     with c_xls:
-        # GERAÇÃO DO EXCEL
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
             if not df_vendas_aud.empty: preparar_exibicao(df_vendas_aud).to_excel(writer, index=False, sheet_name="Auditoria_Vendas")
