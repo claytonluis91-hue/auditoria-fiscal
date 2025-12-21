@@ -36,13 +36,13 @@ def reset_all():
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-    .stApp { background-color: #F4F6F8; } /* Fundo Cinza Gelo (Mais profissional) */
+    .stApp { background-color: #F4F6F8; } /* Fundo Cinza Gelo */
     html, body, [class*="css"] { font-family: 'Inter', sans-serif; color: #2C3E50; }
     
     /* Barra Lateral */
     section[data-testid="stSidebar"] { background-color: #FFFFFF !important; border-right: 1px solid #DCE1E6; }
     
-    /* Header Estilizado (Fundo Azul Marinho) */
+    /* Header Estilizado */
     .header-container {
         background-color: #2C3E50;
         padding: 20px;
@@ -53,7 +53,7 @@ st.markdown("""
     .main-header { font-size: 2rem; font-weight: 700; color: #FFFFFF; margin: 0; }
     .sub-header { font-size: 1rem; color: #BDC3C7; margin-top: 5px; }
     
-    /* Cards de Métricas (Mais Clean) */
+    /* Cards de Métricas */
     div[data-testid="stMetric"] { 
         background-color: #FFFFFF !important; 
         border: 1px solid #E0E0E0; 
@@ -64,7 +64,7 @@ st.markdown("""
     
     /* Botões */
     div.stButton > button[kind="primary"] { 
-        background-color: #E67E22 !important; /* Laranja Nascel apenas para AÇÃO */
+        background-color: #E67E22 !important; /* Laranja Nascel */
         color: white !important; 
         border: none; 
         font-weight: 600;
@@ -168,6 +168,10 @@ if modo_selecionado == "📄 XML (Notas Fiscais)":
 
     c_venda, c_compra = st.columns(2)
     
+    # OBSERVAÇÃO VISUAL:
+    # Após carregar os arquivos, a lista aparece.
+    # O usuário deve clicar na setinha do "Expander" para recolher e limpar a visão.
+    
     with c_venda:
         with st.expander("📤 1. Importar VENDAS (Saídas)", expanded=True):
             st.markdown("Arraste seus XMLs de venda aqui.")
@@ -221,6 +225,7 @@ df_estoque_aud = auditar_df(st.session_state.estoque_df.copy(), aliq_ibs/100, al
 tem_dados = not df_vendas_aud.empty or not df_compras_aud.empty or not df_estoque_aud.empty
 
 if tem_dados:
+    # Definição das colunas na ordem pedida
     cols_ordenadas = ['Cód. Produto', 'Descrição Produto', 'NCM', 'CFOP', 'Novo CST', 'cClassTrib', 'DescRegra', 'Valor', 'vICMS', 'vPIS', 'vCOFINS', 'Carga Atual', 'vIBS', 'vCBS', 'Carga Projetada', 'Validação TIPI']
     
     def preparar_exibicao(df):
@@ -237,15 +242,11 @@ if tem_dados:
         saldo = debito - credito
         
         k1, k2, k3, k4 = st.columns(4)
-        
-        # Estilo Condicional para as Métricas
         k1.metric("Débitos (Saídas)", f"R$ {debito:,.2f}", delta="Passivo Tributário", delta_color="off")
         
-        # Borda Verde para Crédito
         st.markdown("""<style>div[data-testid="metric-container"]:nth-child(2) {border-left: 5px solid #27AE60 !important;}</style>""", unsafe_allow_html=True)
         k2.metric("Créditos (Entradas)", f"R$ {credito:,.2f}", delta="Recuperável", delta_color="normal")
         
-        # Borda Vermelha/Verde para Saldo
         cor_saldo = "#C0392B" if saldo > 0 else "#27AE60"
         st.markdown(f"""<style>div[data-testid="metric-container"]:nth-child(3) {{border-left: 5px solid {cor_saldo} !important;}}</style>""", unsafe_allow_html=True)
         k3.metric("Saldo Estimado", f"R$ {abs(saldo):,.2f}", delta="A Recolher" if saldo > 0 else "Saldo Credor", delta_color="inverse")
@@ -256,24 +257,29 @@ if tem_dados:
         
         st.divider()
         
-        # --- NOVO GRÁFICO INTELIGENTE ---
         if not df_vendas_aud.empty:
             c_graf1, c_graf2 = st.columns([2, 1])
             
             with c_graf1:
                 st.markdown("#### 🏆 Top 5 Produtos com Maior Carga Tributária")
-                # Agrupa por produto e soma o imposto
                 top_produtos = df_vendas_aud.groupby('Produto')['Carga Projetada'].sum().nlargest(5).reset_index()
-                top_produtos = top_produtos.sort_values(by='Carga Projetada', ascending=True) # Sort para o gráfico horizontal
-                
-                # Gráfico Horizontal (Mais legível)
+                top_produtos = top_produtos.sort_values(by='Carga Projetada', ascending=True)
+                # Gráfico Top 5 (Cor Laranja Única - Seguro)
                 st.bar_chart(top_produtos, x="Carga Projetada", y="Produto", color="#E67E22", horizontal=True)
             
             with c_graf2:
                 st.markdown("#### Composição IBS vs CBS")
-                st.bar_chart(pd.DataFrame({'Imposto': ['IBS (Estados)', 'CBS (Federal)'], 'Valor': [df_vendas_aud['vIBS'].sum(), df_vendas_aud['vCBS'].sum()]}), x='Imposto', y='Valor', color=["#3498DB", "#9B59B6"])
+                # Gráfico IBS/CBS (CORRIGIDO: color='Imposto' para colorir automático)
+                st.bar_chart(
+                    pd.DataFrame({
+                        'Imposto': ['IBS (Estados)', 'CBS (Federal)'], 
+                        'Valor': [df_vendas_aud['vIBS'].sum(), df_vendas_aud['vCBS'].sum()]
+                    }), 
+                    x='Imposto', 
+                    y='Valor', 
+                    color='Imposto' # <--- CORREÇÃO DO ERRO AQUI
+                )
 
-    # --- TABELAS ---
     col_config = {
         "Valor": st.column_config.ProgressColumn(
             "Valor Base", format="R$ %.2f", min_value=0, max_value=float(df_vendas_aud['Valor'].max()) if not df_vendas_aud.empty else 1000,
@@ -300,7 +306,6 @@ if tem_dados:
         if not df_vendas_aud.empty: c1.dataframe(df_vendas_aud[['Chave NFe']].drop_duplicates(), use_container_width=True)
         if not df_compras_aud.empty: c2.dataframe(df_compras_aud[['Chave NFe']].drop_duplicates(), use_container_width=True)
 
-    # --- EXPORTAÇÃO ---
     st.markdown("---")
     st.markdown("### 📥 Exportar Resultados")
     
