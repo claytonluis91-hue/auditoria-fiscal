@@ -145,7 +145,11 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliq_ibs, aliq_cbs):
     v_cbs = cbs_padrao
     
     validacao = "⚠️ NCM Ausente (TIPI)"
-    if not df_tipi.empty:
+    
+    # Se o item é de SPED Perfil B (Sem NCM), não validamos TIPI
+    if ncm == 'SEM_DETALHE':
+        validacao = "ℹ️ SPED Perfil B"
+    elif not df_tipi.empty:
         if ncm in df_tipi.index: validacao = "✅ NCM Válido"
         elif ncm[:4] in df_tipi.index: validacao = "✅ Posição Válida"
 
@@ -184,13 +188,15 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliq_ibs, aliq_cbs):
         return cClassTrib, f"{regra['Descricao']} - {origem}", regra['Status'], cst_final, origem, validacao, imposto_atual, imposto_futuro, v_ibs, v_cbs
     
     else:
-        termo = "medicamentos" if ncm.startswith('30') else ("cesta básica" if ncm.startswith('10') else "tributação integral")
-        if not df_json.empty and 'Busca' in df_json.columns:
-            res = df_json[df_json['Busca'].str.contains(termo, na=False)]
-            if not res.empty:
-                cClassTrib = res.iloc[0]['Código da Classificação Tributária']
-                cst_json = res.iloc[0].get('Código da Situação Tributária', '000')
-                return cClassTrib, res.iloc[0]['Descrição do Código da Classificação Tributária'], "SUGESTAO JSON", cst_json, origem, validacao, imposto_atual, v_ibs+v_cbs, v_ibs, v_cbs
+        # Tenta fallback texto apenas se tiver NCM real
+        if ncm != 'SEM_DETALHE':
+            termo = "medicamentos" if ncm.startswith('30') else ("cesta básica" if ncm.startswith('10') else "tributação integral")
+            if not df_json.empty and 'Busca' in df_json.columns:
+                res = df_json[df_json['Busca'].str.contains(termo, na=False)]
+                if not res.empty:
+                    cClassTrib = res.iloc[0]['Código da Classificação Tributária']
+                    cst_json = res.iloc[0].get('Código da Situação Tributária', '000')
+                    return cClassTrib, res.iloc[0]['Descrição do Código da Classificação Tributária'], "SUGESTAO JSON", cst_json, origem, validacao, imposto_atual, v_ibs+v_cbs, v_ibs, v_cbs
 
     return '000001', 'Padrão - Tributação Integral', 'PADRAO', '000', origem, validacao, imposto_atual, v_ibs+v_cbs, v_ibs, v_cbs
 
@@ -235,7 +241,6 @@ def processar_sped_fiscal(arquivo):
     compras = []
     nome_empresa = "Empresa SPED"
     
-    # Decodificação segura
     raw_content = arquivo.getvalue()
     try: conteudo = raw_content.decode('latin-1')
     except: 
@@ -243,75 +248,87 @@ def processar_sped_fiscal(arquivo):
         except: conteudo = raw_content.decode('latin-1', errors='ignore')
 
     lines = conteudo.split('\n')
-    
-    # 1. Mapa de Produtos (Reg 0200)
-    # COD_ITEM -> {NCM, DESCR}
     mapa_produtos = {}
     
+    # Pass 1: Cadastro e Empresa
     for linha in lines:
         if not linha.startswith('|'): continue
         campos = linha.split('|')
-        
-        # Nome da Empresa (0000)
-        if campos[1] == '0000' and len(campos) > 6:
-            nome_empresa = campos[6]
-            
-        # Cadastro de Produto (0200)
+        if campos[1] == '0000' and len(campos) > 6: nome_empresa = campos[6]
         elif campos[1] == '0200' and len(campos) > 8:
-            cod = campos[2]
-            descr = campos[3]
-            ncm = campos[8]
-            mapa_produtos[cod] = {'NCM': ncm, 'Produto': descr}
+            mapa_produtos[campos[2]] = {'NCM': campos[8], 'Produto': campos[3]}
 
-    # 2. Processamento das Notas (Bloco C)
+    # Pass 2: Notas (Lógica Mista C170/C190)
     nota_atual = None
+    buffer_itens = []
+    usou_c170 = False
     
+    # Função auxiliar para fechar a nota anterior
+    def fechar_nota(nota, itens, usou_detalhe):
+        if not nota: return
+        # Se achou C170, usa eles. Se não, usa C190 (Resumo)
+        # Se tiver os dois, C170 tem prioridade pois tem NCM
+        lista_final = [i for i in itens if i['Origem'] == ('C170' if usou_detalhe else 'C190')]
+        
+        if nota['Tipo'] == 'SAIDA': vendas.extend(lista_final)
+        else: compras.extend(lista_final)
+
     for linha in lines:
         if not linha.startswith('|'): continue
         campos = linha.split('|')
         reg = campos[1]
         
-        # C100: Cabeçalho da Nota
-        if reg == 'C100' and len(campos) > 10:
-            # IND_OPER: 0=Entrada, 1=Saída
-            # COD_SIT: 00=Regular (Só processa se for regular)
-            ind_oper = campos[2]
-            cod_sit = campos[6]
-            num_doc = campos[8]
-            chave = campos[9]
+        if reg == 'C100':
+            # Fecha nota anterior antes de começar a nova
+            fechar_nota(nota_atual, buffer_itens, usou_c170)
             
-            if cod_sit == '00': # Apenas Documento Regular
+            # Nova Nota
+            nota_atual = None
+            buffer_itens = []
+            usou_c170 = False
+            
+            # COD_SIT: Aceita 00 (Regular), 01 (Extemp) e 1 (Variação)
+            # Ignora Cancelada (02), Denegada (04), Inutilizada (05)
+            cod_sit = campos[6]
+            if cod_sit in ['00', '01', '1', '06', '6']: 
+                ind_oper = campos[2]
+                chave = campos[9] if len(campos) > 9 else f"DOC_{campos[8]}"
                 nota_atual = {
                     'Tipo': 'SAIDA' if ind_oper == '1' else 'ENTRADA',
-                    'Chave': chave if chave else f"DOC_{num_doc}"
+                    'Chave': chave
                 }
-            else:
-                nota_atual = None # Ignora nota cancelada
                 
-        # C170: Itens da Nota (Detalhe)
-        elif reg == 'C170' and nota_atual and len(campos) > 10:
-            cod_item = campos[3]
-            valor = to_float(campos[7])
-            cst_icms = campos[10]
-            cfop = campos[11]
-            
-            # Busca dados no mapa 0200
-            dados_prod = mapa_produtos.get(cod_item, {'NCM': '', 'Produto': 'Item Não Cadastrado'})
-            
-            item = {
-                'Cód. Produto': cod_item,
-                'Chave NFe': nota_atual['Chave'],
-                'NCM': dados_prod['NCM'],
-                'Produto': dados_prod['Produto'],
-                'CFOP': cfop,
-                'Valor': valor,
-                'vICMS': 0.0, 'vPIS': 0.0, 'vCOFINS': 0.0, # SPED C170 tem isso, mas simplificamos por hora
-                'Tipo': nota_atual['Tipo']
-            }
-            
-            if nota_atual['Tipo'] == 'SAIDA':
-                vendas.append(item)
-            else:
-                compras.append(item)
+        elif nota_atual:
+            # Item Detalhado (Melhor cenário)
+            if reg == 'C170' and len(campos) > 10:
+                usou_c170 = True
+                cod_item = campos[3]
+                dados = mapa_produtos.get(cod_item, {'NCM': '', 'Produto': 'Item Não Cadastrado'})
+                buffer_itens.append({
+                    'Cód. Produto': cod_item, 'Chave NFe': nota_atual['Chave'],
+                    'NCM': dados['NCM'], 'Produto': dados['Produto'],
+                    'CFOP': campos[11], 'Valor': to_float(campos[7]),
+                    'vICMS': to_float(campos[15]) if len(campos)>15 else 0.0,
+                    'vPIS': to_float(campos[25]) if len(campos)>25 else 0.0,
+                    'vCOFINS': to_float(campos[26]) if len(campos)>26 else 0.0,
+                    'Tipo': nota_atual['Tipo'], 'Origem': 'C170'
+                })
+                
+            # Item Resumido (Fallback para Perfil B)
+            elif reg == 'C190' and len(campos) > 5:
+                # C190 não tem produto, criamos um genérico
+                cst = campos[2]
+                cfop = campos[3]
+                buffer_itens.append({
+                    'Cód. Produto': 'RESUMO', 'Chave NFe': nota_atual['Chave'],
+                    'NCM': 'SEM_DETALHE', # Importante para o motor saber que é fallback
+                    'Produto': f"Resumo CST {cst} CFOP {cfop}",
+                    'CFOP': cfop, 'Valor': to_float(campos[5]),
+                    'vICMS': to_float(campos[7]), 'vPIS': 0.0, 'vCOFINS': 0.0,
+                    'Tipo': nota_atual['Tipo'], 'Origem': 'C190'
+                })
+
+    # Fecha a última nota do arquivo
+    fechar_nota(nota_atual, buffer_itens, usou_c170)
 
     return nome_empresa, vendas, compras
