@@ -90,7 +90,6 @@ def extrair_regras(texto_fonte, mapa_existente, nome_fonte):
         bloco = texto[inicio:fim]
         ncms_raw = re.findall(r'(?<!\d)(\d{2,4}\.?\d{0,2}\.?\d{0,2})(?!\d)', bloco)
         caps = CONFIG_ANEXOS[nome_anexo]["Caps"]
-        
         for codigo in ncms_raw:
             c = codigo.replace('.', '')
             if len(c) in [4,6,8]:
@@ -227,39 +226,92 @@ def processar_xml_detalhado(tree, ns, tipo_op='SAIDA'):
         })
     return lista
 
+def to_float(val):
+    try: return float(val.replace(',', '.'))
+    except: return 0.0
+
 def processar_sped_fiscal(arquivo):
-    lista_produtos = []
+    vendas = []
+    compras = []
     nome_empresa = "Empresa SPED"
     
-    # Tenta decodificar Latin-1, se falhar tenta UTF-8 (Proteção contra SPED moderno)
+    # Decodificação segura
     raw_content = arquivo.getvalue()
-    try:
-        conteudo = raw_content.decode('latin-1')
-    except:
-        try:
-            conteudo = raw_content.decode('utf-8')
-        except:
-            conteudo = raw_content.decode('latin-1', errors='ignore')
+    try: conteudo = raw_content.decode('latin-1')
+    except: 
+        try: conteudo = raw_content.decode('utf-8')
+        except: conteudo = raw_content.decode('latin-1', errors='ignore')
 
-    for linha in conteudo.split('\n'):
+    lines = conteudo.split('\n')
+    
+    # 1. Mapa de Produtos (Reg 0200)
+    # COD_ITEM -> {NCM, DESCR}
+    mapa_produtos = {}
+    
+    for linha in lines:
         if not linha.startswith('|'): continue
         campos = linha.split('|')
         
-        # Registro 0000 (Empresa)
-        if campos[1] == '0000' and len(campos) > 6: 
+        # Nome da Empresa (0000)
+        if campos[1] == '0000' and len(campos) > 6:
             nome_empresa = campos[6]
             
-        # Registro 0200 (Catálogo de Produtos)
+        # Cadastro de Produto (0200)
         elif campos[1] == '0200' and len(campos) > 8:
-            # Layout: |0200|COD_ITEM|DESCR_ITEM|...|COD_NCM|...|
-            lista_produtos.append({
-                'Cód. Produto': campos[2], 
-                'Chave NFe': 'CADASTRO SPED', 
-                'NCM': campos[8], # NCM geralmente está na posição 8
-                'Produto': campos[3], # Descrição na 3
-                'CFOP': '0000', 
-                'Valor': 0.0, # Catálogo não tem valor comercial
-                'vICMS': 0.0, 'vPIS': 0.0, 'vCOFINS': 0.0, 
-                'Tipo': 'CADASTRO'
-            })
-    return nome_empresa, lista_produtos
+            cod = campos[2]
+            descr = campos[3]
+            ncm = campos[8]
+            mapa_produtos[cod] = {'NCM': ncm, 'Produto': descr}
+
+    # 2. Processamento das Notas (Bloco C)
+    nota_atual = None
+    
+    for linha in lines:
+        if not linha.startswith('|'): continue
+        campos = linha.split('|')
+        reg = campos[1]
+        
+        # C100: Cabeçalho da Nota
+        if reg == 'C100' and len(campos) > 10:
+            # IND_OPER: 0=Entrada, 1=Saída
+            # COD_SIT: 00=Regular (Só processa se for regular)
+            ind_oper = campos[2]
+            cod_sit = campos[6]
+            num_doc = campos[8]
+            chave = campos[9]
+            
+            if cod_sit == '00': # Apenas Documento Regular
+                nota_atual = {
+                    'Tipo': 'SAIDA' if ind_oper == '1' else 'ENTRADA',
+                    'Chave': chave if chave else f"DOC_{num_doc}"
+                }
+            else:
+                nota_atual = None # Ignora nota cancelada
+                
+        # C170: Itens da Nota (Detalhe)
+        elif reg == 'C170' and nota_atual and len(campos) > 10:
+            cod_item = campos[3]
+            valor = to_float(campos[7])
+            cst_icms = campos[10]
+            cfop = campos[11]
+            
+            # Busca dados no mapa 0200
+            dados_prod = mapa_produtos.get(cod_item, {'NCM': '', 'Produto': 'Item Não Cadastrado'})
+            
+            item = {
+                'Cód. Produto': cod_item,
+                'Chave NFe': nota_atual['Chave'],
+                'NCM': dados_prod['NCM'],
+                'Produto': dados_prod['Produto'],
+                'CFOP': cfop,
+                'Valor': valor,
+                'vICMS': 0.0, 'vPIS': 0.0, 'vCOFINS': 0.0, # SPED C170 tem isso, mas simplificamos por hora
+                'Tipo': nota_atual['Tipo']
+            }
+            
+            if nota_atual['Tipo'] == 'SAIDA':
+                vendas.append(item)
+            else:
+                compras.append(item)
+
+    return nome_empresa, vendas, compras
