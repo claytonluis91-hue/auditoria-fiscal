@@ -32,18 +32,32 @@ def reset_all():
     st.session_state.empresa_nome = "Nenhuma Empresa"
     st.session_state.uploader_key += 1
 
-# --- CSS (AQUI ESTÁ A MÁGICA VISUAL) ---
+# --- CSS (AGORA VAI!) ---
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
     .stApp { background-color: #F8F9FA; }
     html, body, [class*="css"] { font-family: 'Inter', sans-serif; color: #2C3E50; }
     
-    /* Esconde a lista gigante de arquivos carregados (O TRUQUE) */
-    div[data-testid='stUploadedFile'] { display: none; }
-    section[data-testid="stFileUploader"] div[role="list"] { display: none !important; }
+    /* --- O TRUQUE DO MÁGICO (CSS REFORÇADO) --- */
     
-    /* Estilos Gerais */
+    /* Esconde cada linha de arquivo carregado */
+    [data-testid='stUploadedFile'] { 
+        display: none !important; 
+    }
+    
+    /* Esconde a paginação 'Showing page 1 of...' */
+    [data-testid='stFileUploader'] small {
+        display: none !important;
+    }
+
+    /* Esconde qualquer lista dentro do uploader */
+    section[data-testid="stFileUploader"] section {
+        display: none !important;
+    }
+    
+    /* ------------------------------------------ */
+
     section[data-testid="stSidebar"] { background-color: #FFFFFF !important; border-right: 1px solid #E0E0E0; }
     section[data-testid="stSidebar"] * { color: #2C3E50 !important; }
     .main-header { font-size: 2.5rem; font-weight: 800; color: #1a252f; text-align: center; margin-top: 20px;}
@@ -97,17 +111,15 @@ st.markdown("---")
 
 ns = {'ns': 'http://www.portalfiscal.inf.br/nfe'}
 
-# === FUNÇÃO DE PROCESSAMENTO COM BARRA DE PROGRESSO ===
+# === FUNÇÃO COM BARRA (Mantida) ===
 def processar_arquivos_com_barra(arquivos, tipo):
     lista = []
     total_arquivos = len(arquivos)
     
-    # Cria a barra de progresso AZUL na tela
     barra = st.progress(0, text=f"⏳ Iniciando leitura de {total_arquivos} arquivos...")
     
     for i, arquivo in enumerate(arquivos):
         progresso = (i + 1) / total_arquivos
-        # Atualiza a barra com "Processando 5 de 50..."
         barra.progress(progresso, text=f"Processando {i+1} de {total_arquivos} - {arquivo.name}")
         
         try:
@@ -118,7 +130,7 @@ def processar_arquivos_com_barra(arquivos, tipo):
         except: 
             continue
             
-    barra.empty() # Limpa a barra ao terminar
+    barra.empty()
     return lista
 
 if modo_selecionado == "📄 XML (Notas Fiscais)":
@@ -129,16 +141,18 @@ if modo_selecionado == "📄 XML (Notas Fiscais)":
     c_venda, c_compra = st.columns(2)
     with c_venda:
         st.markdown('<div class="upload-title">📤 VENDAS (Saídas)</div>', unsafe_allow_html=True)
-        # O label_visibility="collapsed" junto com o CSS vai esconder a lista
         vendas_files = st.file_uploader("Upload Vendas", type=['xml'], accept_multiple_files=True, key=f"v_{st.session_state.uploader_key}", label_visibility="collapsed")
+        
+        # Resumo simples abaixo do botão (já que escondemos a lista)
         if vendas_files:
-            st.info(f"📁 {len(vendas_files)} Arquivos selecionados") # Mostra resumo
+            st.success(f"✅ {len(vendas_files)} XMLs selecionados")
 
     with c_compra:
         st.markdown('<div class="upload-title">📥 COMPRAS (Entradas)</div>', unsafe_allow_html=True)
         compras_files = st.file_uploader("Upload Compras", type=['xml'], accept_multiple_files=True, key=f"c_{st.session_state.uploader_key}", label_visibility="collapsed")
+        
         if compras_files:
-            st.info(f"📁 {len(compras_files)} Arquivos selecionados")
+            st.success(f"✅ {len(compras_files)} XMLs selecionados")
 
     if vendas_files and st.session_state.vendas_df.empty:
         st.session_state.vendas_df = pd.DataFrame(processar_arquivos_com_barra(vendas_files, 'SAIDA'))
