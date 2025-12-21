@@ -97,16 +97,6 @@ def extrair_regras(texto_fonte, mapa_existente, nome_fonte):
                 if not caps or any(c.startswith(cap) for cap in caps):
                     if c not in mapa_existente or nome_fonte == "BACKUP":
                         mapa_existente[c] = nome_anexo
-                        
-                        # --- CORREÇÃO DE GENERALIZAÇÃO (Versão 39.0) ---
-                        # Antes, se achava 2202.99.00, ele adicionava 2202 como pai.
-                        # Isso fazia 2202.10.00 (Refri) cair na regra.
-                        # AGORA: NÃO adicionamos pais automaticamente para 8 dígitos.
-                        # A regra deve ser explícita (ex: 20.04 no texto para pegar a posição toda).
-                        
-                        # Removemos as linhas que adicionavam 'c[:4]' automaticamente.
-                        # Apenas salvamos o código exato que está no texto.
-                        
     return mapa_existente
 
 def carregar_base_legal():
@@ -171,8 +161,6 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliq_ibs, aliq_cbs):
 
     anexo, origem = None, "Regra Geral"
     
-    # BUSCA HIERÁRQUICA
-    # Tenta NCM exato, depois 6 digitos, depois 4 digitos, depois Capitulo
     for tent in [ncm, ncm[:6], ncm[:4], ncm[:2]]:
         if tent in mapa_regras:
             anexo = mapa_regras[tent]
@@ -197,7 +185,6 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliq_ibs, aliq_cbs):
         return cClassTrib, f"{regra['Descricao']} - {origem}", regra['Status'], cst_final, origem, validacao, imposto_atual, imposto_futuro, v_ibs, v_cbs
     
     else:
-        # Fallback Texto
         termo = "medicamentos" if ncm.startswith('30') else ("cesta básica" if ncm.startswith('10') else "tributação integral")
         if not df_json.empty and 'Busca' in df_json.columns:
             res = df_json[df_json['Busca'].str.contains(termo, na=False)]
@@ -208,7 +195,7 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliq_ibs, aliq_cbs):
 
     return '000001', 'Padrão - Tributação Integral', 'PADRAO', '000', origem, validacao, imposto_atual, v_ibs+v_cbs, v_ibs, v_cbs
 
-# --- PARSERS (MANTIDOS) ---
+# --- PARSERS INTELIGENTES ---
 def extrair_nome_empresa_xml(tree, ns):
     root = tree.getroot()
     emit = root.find('.//ns:emit', ns)
@@ -243,14 +230,36 @@ def processar_xml_detalhado(tree, ns, tipo_op='SAIDA'):
 def processar_sped_fiscal(arquivo):
     lista_produtos = []
     nome_empresa = "Empresa SPED"
-    conteudo = arquivo.getvalue().decode('latin-1', errors='ignore')
+    
+    # Tenta decodificar Latin-1, se falhar tenta UTF-8 (Proteção contra SPED moderno)
+    raw_content = arquivo.getvalue()
+    try:
+        conteudo = raw_content.decode('latin-1')
+    except:
+        try:
+            conteudo = raw_content.decode('utf-8')
+        except:
+            conteudo = raw_content.decode('latin-1', errors='ignore')
+
     for linha in conteudo.split('\n'):
         if not linha.startswith('|'): continue
         campos = linha.split('|')
-        if campos[1] == '0000' and len(campos) > 6: nome_empresa = campos[6]
+        
+        # Registro 0000 (Empresa)
+        if campos[1] == '0000' and len(campos) > 6: 
+            nome_empresa = campos[6]
+            
+        # Registro 0200 (Catálogo de Produtos)
         elif campos[1] == '0200' and len(campos) > 8:
+            # Layout: |0200|COD_ITEM|DESCR_ITEM|...|COD_NCM|...|
             lista_produtos.append({
-                'Cód. Produto': campos[2], 'Chave NFe': 'CADASTRO SPED', 'NCM': campos[8],
-                'Produto': campos[3], 'CFOP': '0000', 'Valor': 0.0, 'vICMS': 0.0, 'vPIS': 0.0, 'vCOFINS': 0.0, 'Tipo': 'CADASTRO'
+                'Cód. Produto': campos[2], 
+                'Chave NFe': 'CADASTRO SPED', 
+                'NCM': campos[8], # NCM geralmente está na posição 8
+                'Produto': campos[3], # Descrição na 3
+                'CFOP': '0000', 
+                'Valor': 0.0, # Catálogo não tem valor comercial
+                'vICMS': 0.0, 'vPIS': 0.0, 'vCOFINS': 0.0, 
+                'Tipo': 'CADASTRO'
             })
     return nome_empresa, lista_produtos

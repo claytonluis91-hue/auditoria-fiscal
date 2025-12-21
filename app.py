@@ -32,17 +32,15 @@ def reset_all():
     st.session_state.empresa_nome = "Nenhuma Empresa"
     st.session_state.uploader_key += 1
 
-# --- CSS (VISUAL PREMIUM / CORPORATE) ---
+# --- CSS (VISUAL PREMIUM) ---
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-    .stApp { background-color: #F4F6F8; } /* Fundo Cinza Gelo */
+    .stApp { background-color: #F4F6F8; }
     html, body, [class*="css"] { font-family: 'Inter', sans-serif; color: #2C3E50; }
     
-    /* Barra Lateral */
     section[data-testid="stSidebar"] { background-color: #FFFFFF !important; border-right: 1px solid #DCE1E6; }
     
-    /* Header Estilizado */
     .header-container {
         background-color: #2C3E50;
         padding: 20px;
@@ -53,7 +51,6 @@ st.markdown("""
     .main-header { font-size: 2rem; font-weight: 700; color: #FFFFFF; margin: 0; }
     .sub-header { font-size: 1rem; color: #BDC3C7; margin-top: 5px; }
     
-    /* Cards de Métricas */
     div[data-testid="stMetric"] { 
         background-color: #FFFFFF !important; 
         border: 1px solid #E0E0E0; 
@@ -62,9 +59,8 @@ st.markdown("""
         box-shadow: 0 1px 3px rgba(0,0,0,0.05);
     }
     
-    /* Botões */
     div.stButton > button[kind="primary"] { 
-        background-color: #E67E22 !important; /* Laranja Nascel */
+        background-color: #E67E22 !important; 
         color: white !important; 
         border: none; 
         font-weight: 600;
@@ -72,13 +68,6 @@ st.markdown("""
     }
     div.stButton > button[kind="primary"]:hover { transform: scale(1.02); }
     
-    div.stButton > button[kind="secondary"] { 
-        background-color: #FFFFFF !important; 
-        color: #2C3E50 !important; 
-        border: 1px solid #BDC3C7 !important;
-    }
-    
-    /* Expander (Caixa de Upload) */
     .streamlit-expanderHeader { 
         font-weight: 600; 
         color: #34495E; 
@@ -168,10 +157,6 @@ if modo_selecionado == "📄 XML (Notas Fiscais)":
 
     c_venda, c_compra = st.columns(2)
     
-    # OBSERVAÇÃO VISUAL:
-    # Após carregar os arquivos, a lista aparece.
-    # O usuário deve clicar na setinha do "Expander" para recolher e limpar a visão.
-    
     with c_venda:
         with st.expander("📤 1. Importar VENDAS (Saídas)", expanded=True):
             st.markdown("Arraste seus XMLs de venda aqui.")
@@ -204,7 +189,7 @@ else:
             sped_file = st.file_uploader("SPED", type=['txt'], accept_multiple_files=False, key=f"s_{st.session_state.uploader_key}", label_visibility="collapsed")
 
     if sped_file and st.session_state.estoque_df.empty:
-        with st.spinner("Processando Registro 0200..."):
+        with st.spinner("Processando SPED (Bloco 0, C e H)..."):
             nome, itens = motor.processar_sped_fiscal(sped_file)
             st.session_state.empresa_nome = nome
             st.session_state.estoque_df = pd.DataFrame(itens)
@@ -225,7 +210,6 @@ df_estoque_aud = auditar_df(st.session_state.estoque_df.copy(), aliq_ibs/100, al
 tem_dados = not df_vendas_aud.empty or not df_compras_aud.empty or not df_estoque_aud.empty
 
 if tem_dados:
-    # Definição das colunas na ordem pedida
     cols_ordenadas = ['Cód. Produto', 'Descrição Produto', 'NCM', 'CFOP', 'Novo CST', 'cClassTrib', 'DescRegra', 'Valor', 'vICMS', 'vPIS', 'vCOFINS', 'Carga Atual', 'vIBS', 'vCBS', 'Carga Projetada', 'Validação TIPI']
     
     def preparar_exibicao(df):
@@ -233,7 +217,8 @@ if tem_dados:
         return df.rename(columns={'Produto': 'Descrição Produto'})[cols_ordenadas]
 
     st.markdown("---")
-    tabs = st.tabs(["📊 Dashboard Financeiro", "📤 Saídas (Débitos)", "📥 Entradas (Créditos)", "📂 Arquivos"])
+    # NOVA ABA ADICIONADA: "📦 Catálogo SPED"
+    tabs = st.tabs(["📊 Dashboard Financeiro", "📤 Saídas (Débitos)", "📥 Entradas (Créditos)", "📦 Catálogo SPED", "📂 Arquivos"])
 
     with tabs[0]:
         st.markdown("### Resumo da Apuração")
@@ -241,49 +226,49 @@ if tem_dados:
         credito = df_compras_aud['Carga Projetada'].sum() if not df_compras_aud.empty else 0
         saldo = debito - credito
         
+        # Se não tiver venda, mas tiver SPED, mostra contagem de itens
+        total_itens_sped = len(df_estoque_aud) if not df_estoque_aud.empty else 0
+        
         k1, k2, k3, k4 = st.columns(4)
-        k1.metric("Débitos (Saídas)", f"R$ {debito:,.2f}", delta="Passivo Tributário", delta_color="off")
         
-        st.markdown("""<style>div[data-testid="metric-container"]:nth-child(2) {border-left: 5px solid #27AE60 !important;}</style>""", unsafe_allow_html=True)
-        k2.metric("Créditos (Entradas)", f"R$ {credito:,.2f}", delta="Recuperável", delta_color="normal")
+        if total_itens_sped > 0 and debito == 0:
+             # Modo SPED (Visualização de Catálogo)
+             k1.metric("Itens no SPED", f"{total_itens_sped} Produtos", delta="Registro 0200", delta_color="normal")
+             k2.metric("Tipo de Arquivo", "SPED Fiscal", delta="EFD ICMS/IPI", delta_color="off")
+             k3.metric("Status", "Auditoria de Cadastro", delta="Ativo", delta_color="normal")
+        else:
+             # Modo XML (Valores Financeiros)
+             k1.metric("Débitos (Saídas)", f"R$ {debito:,.2f}", delta="Passivo Tributário", delta_color="off")
+             st.markdown("""<style>div[data-testid="metric-container"]:nth-child(2) {border-left: 5px solid #27AE60 !important;}</style>""", unsafe_allow_html=True)
+             k2.metric("Créditos (Entradas)", f"R$ {credito:,.2f}", delta="Recuperável", delta_color="normal")
+             
+             cor_saldo = "#C0392B" if saldo > 0 else "#27AE60"
+             st.markdown(f"""<style>div[data-testid="metric-container"]:nth-child(3) {{border-left: 5px solid {cor_saldo} !important;}}</style>""", unsafe_allow_html=True)
+             k3.metric("Saldo Estimado", f"R$ {abs(saldo):,.2f}", delta="A Recolher" if saldo > 0 else "Saldo Credor", delta_color="inverse")
         
-        cor_saldo = "#C0392B" if saldo > 0 else "#27AE60"
-        st.markdown(f"""<style>div[data-testid="metric-container"]:nth-child(3) {{border-left: 5px solid {cor_saldo} !important;}}</style>""", unsafe_allow_html=True)
-        k3.metric("Saldo Estimado", f"R$ {abs(saldo):,.2f}", delta="A Recolher" if saldo > 0 else "Saldo Credor", delta_color="inverse")
-        
+        # Contagem de erros unificada
         erros = 0
         if not df_vendas_aud.empty: erros += len(df_vendas_aud[df_vendas_aud['Validação TIPI'].str.contains("Ausente")])
+        elif not df_estoque_aud.empty: erros += len(df_estoque_aud[df_estoque_aud['Validação TIPI'].str.contains("Ausente")])
+        
         k4.metric("Alertas de NCM", erros, delta="Atenção Necessária" if erros > 0 else "Base Saneada", delta_color="inverse")
         
         st.divider()
         
         if not df_vendas_aud.empty:
             c_graf1, c_graf2 = st.columns([2, 1])
-            
             with c_graf1:
                 st.markdown("#### 🏆 Top 5 Produtos com Maior Carga Tributária")
                 top_produtos = df_vendas_aud.groupby('Produto')['Carga Projetada'].sum().nlargest(5).reset_index()
                 top_produtos = top_produtos.sort_values(by='Carga Projetada', ascending=True)
-                # Gráfico Top 5 (Cor Laranja Única - Seguro)
                 st.bar_chart(top_produtos, x="Carga Projetada", y="Produto", color="#E67E22", horizontal=True)
             
             with c_graf2:
                 st.markdown("#### Composição IBS vs CBS")
-                # Gráfico IBS/CBS (CORRIGIDO: color='Imposto' para colorir automático)
-                st.bar_chart(
-                    pd.DataFrame({
-                        'Imposto': ['IBS (Estados)', 'CBS (Federal)'], 
-                        'Valor': [df_vendas_aud['vIBS'].sum(), df_vendas_aud['vCBS'].sum()]
-                    }), 
-                    x='Imposto', 
-                    y='Valor', 
-                    color='Imposto' # <--- CORREÇÃO DO ERRO AQUI
-                )
+                st.bar_chart(pd.DataFrame({'Imposto': ['IBS (Estados)', 'CBS (Federal)'], 'Valor': [df_vendas_aud['vIBS'].sum(), df_vendas_aud['vCBS'].sum()]}), x='Imposto', y='Valor', color='Imposto')
 
     col_config = {
-        "Valor": st.column_config.ProgressColumn(
-            "Valor Base", format="R$ %.2f", min_value=0, max_value=float(df_vendas_aud['Valor'].max()) if not df_vendas_aud.empty else 1000,
-        ),
+        "Valor": st.column_config.ProgressColumn("Valor Base", format="R$ %.2f", min_value=0, max_value=1000),
         "vICMS": st.column_config.NumberColumn(format="R$ %.2f"),
         "vPIS": st.column_config.NumberColumn(format="R$ %.2f"),
         "vCOFINS": st.column_config.NumberColumn(format="R$ %.2f"),
@@ -301,7 +286,15 @@ if tem_dados:
     with tabs[2]:
         if not df_compras_aud.empty: st.dataframe(preparar_exibicao(df_compras_aud), use_container_width=True, hide_index=True, column_config=col_config)
         else: st.info("Sem dados de Compra.")
+    
+    # --- NOVA ABA PARA SPED ---
     with tabs[3]:
+        if not df_estoque_aud.empty:
+            st.markdown(f"**Itens encontrados no Registro 0200:** {len(df_estoque_aud)}")
+            st.dataframe(preparar_exibicao(df_estoque_aud), use_container_width=True, hide_index=True, column_config=col_config)
+        else: st.info("Nenhum arquivo SPED carregado ou Registro 0200 vazio.")
+
+    with tabs[4]:
         c1, c2 = st.columns(2)
         if not df_vendas_aud.empty: c1.dataframe(df_vendas_aud[['Chave NFe']].drop_duplicates(), use_container_width=True)
         if not df_compras_aud.empty: c2.dataframe(df_compras_aud[['Chave NFe']].drop_duplicates(), use_container_width=True)
@@ -322,7 +315,8 @@ if tem_dados:
         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
             if not df_vendas_aud.empty: preparar_exibicao(df_vendas_aud).to_excel(writer, index=False, sheet_name="Auditoria_Vendas")
             if not df_compras_aud.empty: preparar_exibicao(df_compras_aud).to_excel(writer, index=False, sheet_name="Auditoria_Compras")
-            if not df_estoque_aud.empty: df_estoque_aud.to_excel(writer, index=False, sheet_name="Auditoria_SPED")
+            # Exporta a aba SPED
+            if not df_estoque_aud.empty: preparar_exibicao(df_estoque_aud).to_excel(writer, index=False, sheet_name="Auditoria_SPED")
         st.download_button("📊 BAIXAR MEMÓRIA DE CÁLCULO (XLSX)", buffer, "Dados_Auditoria.xlsx", "primary", use_container_width=True)
 
 else:
