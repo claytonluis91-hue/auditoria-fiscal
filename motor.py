@@ -18,16 +18,37 @@ MAPA_CST_CORRETO = {
     "200001": "200", "200002": "200", "400001": "400", "410001": "410"
 }
 
-# --- 2. DADOS E REGRAS (TEXTO MESTRA) ---
+# --- 2. DADOS E REGRAS (TEXTO MESTRA REVISADO) ---
+# Nota: Removi do texto abaixo os NCMs citados como "exceto" na sua lista
+# para evitar que o robô os capture como regra positiva.
 TEXTO_MESTRA = """
 ANEXO I (ZERO)
-1006.20 1006.30 1006.40.00 0401.10.10 0401.10.90 0401.20.10 0401.20.90 0401.40.10 0401.50.10
-0402.10.10 0402.10.90 0402.21.10 0402.21.20 0402.29.10 0402.29.20 1901.10.10 1901.10.90 2106.90.90
-0405.10.00 1517.10.00 0713.33.19 0713.33.29 0713.33.99 0713.35.90 09.01 2101.1 1513.21.20
-1106.20.00 1903.00.00 1102.20.00 1103.13.00 1104.19.00 1104.23.00 1101.00.10 1104.12.00 1104.22.00 1102.90.00
-1701.14.00 1701.99.00 1902.1 1905.90.90 1901.20.10 1901.20.90
-02.01 02.02 02.03 02.04 02.07 0206.2 0206.4 0210.1 03.02 03.03 03.04
-0406.10.10 0406.10.90 0406.20.00 0406.90.10 0406.90.20 0406.90.30 2501.00.20 2501.00.90 09.03
+1006.20 1006.30 1006.40.00
+0401.10.10 0401.10.90 0401.20.10 0401.20.90 0401.40.10 0401.50.10
+0402.10.10 0402.10.90 0402.21.10 0402.21.20 0402.29.10 0402.29.20
+1901.10.10 1901.10.90 2106.90.90
+0405.10.00 1517.10.00
+0713.33.19 0713.33.29 0713.33.99 0713.35.90
+09.01 2101.1 1513.21.20
+1106.20.00 1903.00.00
+1102.20.00 1103.13.00
+1104.19.00 1104.23.00
+1101.00.10
+1701.14.00 1701.99.00
+1902.1
+1905.90.90 1901.20.10 1901.20.90
+1104.12.00 1104.22.00
+1102.90.00
+02.01 02.02 0206.10.00 0206.2 0210.20.00
+02.03 0206.30.00 0206.4 0209.10 0210.1
+02.04 0210.99.20 0210.99.90 0206.80.00 0206.90.00
+02.07 0209.90.00 0210.99.1
+03.02 03.03 03.04
+0406.10.10 0406.10.90 0406.20.00 0406.90.10 0406.90.20 0406.90.30
+2501.00.20 2501.00.90
+09.03
+1901.90.90
+1902.19.00
 
 ANEXO VII (RED 60%)
 0306.1 0306.3 0307 0403 2202.99.00 0409.00.00
@@ -45,7 +66,7 @@ ANEXO XV (ZERO)
 0407.2 0701 0702 0703 0704 0705 0706 0708 0709 0710 0803 0804 0805 0806 0807 0808 0809 0810 0811 0714 0801
 """
 
-# --- 3. CONFIGURAÇÃO TRIBUTÁRIA (CORRIGIDA COM SEU JSON) ---
+# --- 3. CONFIGURAÇÃO TRIBUTÁRIA ---
 CONFIG_ANEXOS = {
     # Anexo I: Cesta Básica Nacional (Redução 100%)
     "ANEXO I":   {"Descricao": "Cesta Básica Nacional", "cClassTrib": "200003", "Reducao": 1.0, "CST_Default": "200", "Status": "ZERO (Anexo I)", "Caps": []},
@@ -53,19 +74,19 @@ CONFIG_ANEXOS = {
     # Anexo IV: Disp Médicos 60%
     "ANEXO IV":  {"Descricao": "Dispositivos Médicos", "cClassTrib": "200005", "Reducao": 0.6, "CST_Default": "200", "Status": "REDUZIDA 60% (Anexo IV)", "Caps": ["30","90"]},
     
-    # Anexo VII: Alimentos 60% (CÓDIGO CORRIGIDO PARA 200034)
+    # Anexo VII: Alimentos 60%
     "ANEXO VII": {"Descricao": "Alimentos Reduzidos", "cClassTrib": "200034", "Reducao": 0.6, "CST_Default": "200", "Status": "REDUZIDA 60% (Anexo VII)", "Caps": ["03","04","07","08","10","11","12","15","16","19","20","21","22"]},
     
     # Anexo VIII: Higiene 60%
     "ANEXO VIII":{"Descricao": "Higiene Pessoal/Limp", "cClassTrib": "200035", "Reducao": 0.6, "CST_Default": "200", "Status": "REDUZIDA 60% (Anexo VIII)", "Caps": ["33","34","48","96"]},
     
-    # Anexo XII: Disp Médicos Zero (CÓDIGO CORRIGIDO PARA 200004)
+    # Anexo XII: Disp Médicos Zero
     "ANEXO XII": {"Descricao": "Dispositivos Médicos (Z)", "cClassTrib": "200004", "Reducao": 1.0, "CST_Default": "200", "Status": "ZERO (Anexo XII)", "Caps": ["90"]},
     
     # Anexo XIV: Medicamentos Zero
     "ANEXO XIV": {"Descricao": "Medicamentos (Zero)", "cClassTrib": "200009", "Reducao": 1.0, "CST_Default": "200", "Status": "ZERO (Anexo XIV)", "Caps": ["30"]},
     
-    # Anexo XV: Hortifruti Zero (CÓDIGO CORRIGIDO PARA 200014)
+    # Anexo XV: Hortifruti Zero
     "ANEXO XV":  {"Descricao": "Hortifruti e Ovos", "cClassTrib": "200014", "Reducao": 1.0, "CST_Default": "200", "Status": "ZERO (Anexo XV)", "Caps": ["04","06","07","08"]}
 }
 
@@ -108,6 +129,7 @@ def extrair_regras(texto_fonte, mapa_existente, nome_fonte):
         for codigo in ncms_raw:
             c = codigo.replace('.', '')
             if len(c) in [4,6,8]:
+                # Só cadastra se bater com os capitulos permitidos na config (segurança extra)
                 if not caps or any(c.startswith(cap) for cap in caps):
                     if c not in mapa_existente or nome_fonte == "BACKUP":
                         mapa_existente[c] = nome_anexo
@@ -148,40 +170,37 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliq_ibs, aliq_cbs):
     ncm = str(row['NCM']).replace('.', '')
     cfop = str(row['CFOP']).replace('.', '') if 'CFOP' in row else '0000'
     valor_prod = float(row.get('Valor', 0.0))
-    tipo_op = row.get('Tipo', 'SAIDA') # Identifica se é entrada ou saída
+    tipo_op = row.get('Tipo', 'SAIDA')
     
-    # Impostos antigos
     v_icms = float(row.get('vICMS', 0))
     v_pis = float(row.get('vPIS', 0))
     v_cofins = float(row.get('vCOFINS', 0))
     imposto_atual = v_icms + v_pis + v_cofins
     base_liquida = max(0, valor_prod - imposto_atual)
     
-    # Cálculo Padrão
     ibs_padrao = base_liquida * aliq_ibs
     cbs_padrao = base_liquida * aliq_cbs
     v_ibs = ibs_padrao
     v_cbs = cbs_padrao
     
-    # Validação NCM
     validacao = "⚠️ NCM Ausente (TIPI)"
     if not df_tipi.empty:
         if ncm in df_tipi.index: validacao = "✅ NCM Válido"
         elif ncm[:4] in df_tipi.index: validacao = "✅ Posição Válida"
 
-    # --- LÓGICA DE CRÉDITO PARA ENTRADAS (NOVO!) ---
-    # CFOPs de Uso/Consumo (1556/2556) ou Ativo (1551/2551) agora dão crédito pleno!
-    cfop_base = cfop[1:] # Pega '556' de '1556'
+    # LÓGICA DE CRÉDITO PARA ENTRADAS
+    cfop_base = cfop[1:]
     eh_uso_consumo = cfop_base in ['556', '407', '551', '406']
     
     if tipo_op == 'ENTRADA' and eh_uso_consumo:
         return '000001', 'Crédito de Uso/Consumo ou Ativo', 'CREDITO PERMITIDO (NOVO)', '000', f'CFOP {cfop}', validacao, 0.0, v_ibs+v_cbs, v_ibs, v_cbs
 
-    # --- LÓGICA PADRÃO (SAÍDAS OU REVENDA) ---
     if verificar_seletivo(ncm):
         return '000001', 'Produto sujeito a Seletivo', 'ALERTA SELETIVO', '002', 'Trava', validacao, imposto_atual, v_ibs+v_cbs, v_ibs, v_cbs
 
     anexo, origem = None, "Regra Geral"
+    
+    # Busca Hierárquica: Tenta NCM Exato (8) -> 6 Dig -> 4 Dig -> 2 Dig
     for tent in [ncm, ncm[:6], ncm[:4], ncm[:2]]:
         if tent in mapa_regras:
             anexo = mapa_regras[tent]
