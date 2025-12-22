@@ -186,14 +186,12 @@ if tem_dados:
         return df.rename(columns={'Produto': 'Descrição Produto'})[cols_ordenadas]
 
     st.markdown("---")
-    # === ABAS ATUALIZADAS ===
     tabs = st.tabs(["⚖️ Simulação de Cenários", "📊 Dashboard Financeiro", "📤 Saídas", "📥 Entradas", "📂 Arquivos"])
 
-    # --- ABA 1: SIMULAÇÃO DE CENÁRIOS (NOVO!) ---
+    # --- ABA 1: SIMULAÇÃO ---
     with tabs[0]:
         st.markdown("### Comparativo: Regime Atual vs. Reforma Tributária")
         
-        # Totais
         total_atual = df_vendas_aud['Carga Atual'].sum() if not df_vendas_aud.empty else 0
         total_novo = df_vendas_aud['Carga Projetada'].sum() if not df_vendas_aud.empty else 0
         delta = total_novo - total_atual
@@ -203,15 +201,12 @@ if tem_dados:
         c1.metric("Carga Atual (ICMS+PIS+COFINS)", f"R$ {total_atual:,.2f}", delta="Regime Antigo", delta_color="off")
         c2.metric("Nova Carga (IBS+CBS)", f"R$ {total_novo:,.2f}", delta="Regime Novo", delta_color="off")
         
-        # Lógica de Cor para o Delta (Verde se economizou, Vermelho se aumentou)
         lbl_delta = "Aumento de Imposto" if delta > 0 else "Economia Estimada"
-        cor_delta = "inverse" # Vermelho para aumento (ruim), Verde para economia (bom)
-        
+        cor_delta = "inverse"
         c3.metric(lbl_delta, f"R$ {abs(delta):,.2f}", delta=f"{pct_delta:+.2f}%", delta_color=cor_delta)
 
         st.divider()
         
-        # Gráfico Comparativo Lado a Lado
         col_g1, col_g2 = st.columns([2, 1])
         with col_g1:
             st.markdown("#### Evolução da Carga Tributária")
@@ -219,17 +214,18 @@ if tem_dados:
                 'Cenário': ['1. Atual', '2. Reforma'],
                 'Valor Imposto': [total_atual, total_novo]
             })
-            st.bar_chart(df_chart, x='Cenário', y='Valor Imposto', color=['#95A5A6', '#E67E22']) # Cinza vs Laranja
+            # CORREÇÃO: Usar color="Cenário" para coloração automática segura
+            st.bar_chart(df_chart, x='Cenário', y='Valor Imposto', color='Cenário') 
             
         with col_g2:
             st.info("""
             **Análise Rápida:**
-            - **Atual:** Soma de ICMS, PIS e COFINS destacados nas notas.
-            - **Reforma:** Aplicação das alíquotas de IBS e CBS sobre a base líquida.
-            - **Variação:** Diferença financeira direta para o fluxo de caixa.
+            - **Atual:** Soma de ICMS, PIS e COFINS destacados.
+            - **Reforma:** Aplicação das alíquotas de IBS e CBS.
+            - **Variação:** Impacto direto no caixa.
             """)
 
-    # --- ABA 2: DASHBOARD FINANCEIRO (MANTIDO) ---
+    # --- ABA 2: DASHBOARD ---
     with tabs[1]:
         st.markdown("### Visão Geral da Apuração (Novo Regime)")
         debito = df_vendas_aud['Carga Projetada'].sum() if not df_vendas_aud.empty else 0
@@ -238,6 +234,7 @@ if tem_dados:
         
         k1, k2, k3, k4 = st.columns(4)
         k1.metric("Débitos (Saídas)", f"R$ {debito:,.2f}", delta="Passivo", delta_color="off")
+        st.markdown("""<style>div[data-testid="metric-container"]:nth-child(2) {border-left: 5px solid #27AE60 !important;}</style>""", unsafe_allow_html=True)
         k2.metric("Créditos (Entradas)", f"R$ {credito:,.2f}", delta="Ativo", delta_color="normal")
         
         cor_saldo = "#C0392B" if saldo > 0 else "#27AE60"
@@ -253,7 +250,6 @@ if tem_dados:
             top_produtos = df_vendas_aud.groupby('Produto')['Carga Projetada'].sum().nlargest(5).reset_index()
             st.bar_chart(top_produtos.sort_values('Carga Projetada'), x="Carga Projetada", y="Produto", color="#E67E22", horizontal=True)
 
-    # --- DEMAIS ABAS ---
     col_config = {
         "Valor": st.column_config.ProgressColumn("Valor Base", format="R$ %.2f", min_value=0, max_value=float(df_vendas_aud['Valor'].max()) if not df_vendas_aud.empty else 1000),
         "vICMS": st.column_config.NumberColumn(format="R$ %.2f"),
