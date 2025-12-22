@@ -41,7 +41,6 @@ st.markdown("""
     html, body, [class*="css"] { font-family: 'Inter', sans-serif; color: #2C3E50; }
     section[data-testid="stSidebar"] { background-color: #FFFFFF !important; border-right: 1px solid #E0E0E0; }
     
-    /* --- CABEÇALHO LINDÃO (DEGRADÊ LARANJA) --- */
     .header-container {
         background: linear-gradient(135deg, #E67E22 0%, #D35400 100%);
         padding: 25px;
@@ -53,22 +52,17 @@ st.markdown("""
     .main-header { font-size: 2.2rem; font-weight: 800; color: #FFFFFF; margin: 0; letter-spacing: -1px; }
     .sub-header { font-size: 1rem; color: #FDEBD0; margin-top: 5px; opacity: 0.9; }
     
-    /* --- BARRA DE PROGRESSO LARANJA --- */
-    .stProgress > div > div > div > div {
-        background-color: #E67E22;
-    }
+    .stProgress > div > div > div > div { background-color: #E67E22; }
 
-    /* Cards de Métricas */
     div[data-testid="stMetric"] { 
         background-color: #FFFFFF !important; 
         border: 1px solid #E0E0E0; 
         border-radius: 10px; 
         padding: 15px; 
         box-shadow: 0 2px 5px rgba(0,0,0,0.05);
-        border-top: 4px solid #E67E22; /* Topo Laranja */
+        border-top: 4px solid #E67E22; 
     }
     
-    /* Botões */
     div.stButton > button[kind="primary"] { background-color: #E67E22 !important; color: white !important; border: none; font-weight: 600; transition: all 0.3s ease; }
     div.stButton > button[kind="primary"]:hover { transform: translateY(-2px); box-shadow: 0 4px 10px rgba(230, 126, 34, 0.3); }
     
@@ -113,7 +107,7 @@ with st.sidebar:
 st.markdown("""
 <div class="header-container">
     <div class="main-header">cClass Auditor AI </div>
-    <div class="sub-header">Inteligência Fiscal & Compliance Tributário | Powered by Nascel</div>
+    <div class="sub-header">Simulador de Cenários & Auditoria Inteligente | Powered by Nascel</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -124,7 +118,6 @@ ns = {'ns': 'http://www.portalfiscal.inf.br/nfe'}
 def processar_arquivos_com_barra(arquivos, tipo):
     lista = []
     total = len(arquivos)
-    # A BARRA AGORA SERÁ LARANJA (via CSS)
     barra = st.progress(0, text=f"⏳ Iniciando leitura de {total} arquivos...")
     for i, arquivo in enumerate(arquivos):
         progresso = (i + 1) / total
@@ -193,39 +186,74 @@ if tem_dados:
         return df.rename(columns={'Produto': 'Descrição Produto'})[cols_ordenadas]
 
     st.markdown("---")
-    tabs = st.tabs(["📊 Dashboard Financeiro", "📤 Saídas (Débitos)", "📥 Entradas (Créditos)", "📂 Arquivos"])
+    # === ABAS ATUALIZADAS ===
+    tabs = st.tabs(["⚖️ Simulação de Cenários", "📊 Dashboard Financeiro", "📤 Saídas", "📥 Entradas", "📂 Arquivos"])
 
+    # --- ABA 1: SIMULAÇÃO DE CENÁRIOS (NOVO!) ---
     with tabs[0]:
-        st.markdown("### Resumo da Apuração")
+        st.markdown("### Comparativo: Regime Atual vs. Reforma Tributária")
+        
+        # Totais
+        total_atual = df_vendas_aud['Carga Atual'].sum() if not df_vendas_aud.empty else 0
+        total_novo = df_vendas_aud['Carga Projetada'].sum() if not df_vendas_aud.empty else 0
+        delta = total_novo - total_atual
+        pct_delta = ((total_novo - total_atual) / total_atual * 100) if total_atual > 0 else 0
+        
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Carga Atual (ICMS+PIS+COFINS)", f"R$ {total_atual:,.2f}", delta="Regime Antigo", delta_color="off")
+        c2.metric("Nova Carga (IBS+CBS)", f"R$ {total_novo:,.2f}", delta="Regime Novo", delta_color="off")
+        
+        # Lógica de Cor para o Delta (Verde se economizou, Vermelho se aumentou)
+        lbl_delta = "Aumento de Imposto" if delta > 0 else "Economia Estimada"
+        cor_delta = "inverse" # Vermelho para aumento (ruim), Verde para economia (bom)
+        
+        c3.metric(lbl_delta, f"R$ {abs(delta):,.2f}", delta=f"{pct_delta:+.2f}%", delta_color=cor_delta)
+
+        st.divider()
+        
+        # Gráfico Comparativo Lado a Lado
+        col_g1, col_g2 = st.columns([2, 1])
+        with col_g1:
+            st.markdown("#### Evolução da Carga Tributária")
+            df_chart = pd.DataFrame({
+                'Cenário': ['1. Atual', '2. Reforma'],
+                'Valor Imposto': [total_atual, total_novo]
+            })
+            st.bar_chart(df_chart, x='Cenário', y='Valor Imposto', color=['#95A5A6', '#E67E22']) # Cinza vs Laranja
+            
+        with col_g2:
+            st.info("""
+            **Análise Rápida:**
+            - **Atual:** Soma de ICMS, PIS e COFINS destacados nas notas.
+            - **Reforma:** Aplicação das alíquotas de IBS e CBS sobre a base líquida.
+            - **Variação:** Diferença financeira direta para o fluxo de caixa.
+            """)
+
+    # --- ABA 2: DASHBOARD FINANCEIRO (MANTIDO) ---
+    with tabs[1]:
+        st.markdown("### Visão Geral da Apuração (Novo Regime)")
         debito = df_vendas_aud['Carga Projetada'].sum() if not df_vendas_aud.empty else 0
         credito = df_compras_aud['Carga Projetada'].sum() if not df_compras_aud.empty else 0
         saldo = debito - credito
         
         k1, k2, k3, k4 = st.columns(4)
-        k1.metric("Débitos (Saídas)", f"R$ {debito:,.2f}", delta="Passivo Tributário", delta_color="off")
-        st.markdown("""<style>div[data-testid="metric-container"]:nth-child(2) {border-left: 5px solid #27AE60 !important;}</style>""", unsafe_allow_html=True)
-        k2.metric("Créditos (Entradas)", f"R$ {credito:,.2f}", delta="Recuperável", delta_color="normal")
+        k1.metric("Débitos (Saídas)", f"R$ {debito:,.2f}", delta="Passivo", delta_color="off")
+        k2.metric("Créditos (Entradas)", f"R$ {credito:,.2f}", delta="Ativo", delta_color="normal")
         
         cor_saldo = "#C0392B" if saldo > 0 else "#27AE60"
         st.markdown(f"""<style>div[data-testid="metric-container"]:nth-child(3) {{border-left: 5px solid {cor_saldo} !important;}}</style>""", unsafe_allow_html=True)
-        k3.metric("Saldo Estimado", f"R$ {abs(saldo):,.2f}", delta="A Recolher" if saldo > 0 else "Saldo Credor", delta_color="inverse")
+        k3.metric("Saldo Estimado", f"R$ {abs(saldo):,.2f}", delta="A Pagar" if saldo > 0 else "Credor", delta_color="inverse")
         
         erros = 0
         if not df_vendas_aud.empty: erros += len(df_vendas_aud[df_vendas_aud['Validação TIPI'].str.contains("Ausente")])
-        k4.metric("Alertas de NCM", erros, delta="Atenção Necessária" if erros > 0 else "Base Saneada", delta_color="inverse")
+        k4.metric("Alertas NCM", erros, delta_color="inverse")
         
-        st.divider()
         if not df_vendas_aud.empty:
-            c_graf1, c_graf2 = st.columns([2, 1])
-            with c_graf1:
-                st.markdown("#### 🏆 Top 5 Produtos com Maior Carga Tributária")
-                top_produtos = df_vendas_aud.groupby('Produto')['Carga Projetada'].sum().nlargest(5).reset_index()
-                top_produtos = top_produtos.sort_values(by='Carga Projetada', ascending=True)
-                st.bar_chart(top_produtos, x="Carga Projetada", y="Produto", color="#E67E22", horizontal=True)
-            with c_graf2:
-                st.markdown("#### Composição IBS vs CBS")
-                st.bar_chart(pd.DataFrame({'Imposto': ['IBS', 'CBS'], 'Valor': [df_vendas_aud['vIBS'].sum(), df_vendas_aud['vCBS'].sum()]}), x='Imposto', y='Valor', color='Imposto')
+            st.markdown("#### 🏆 Top 5 Produtos - Maior Carga")
+            top_produtos = df_vendas_aud.groupby('Produto')['Carga Projetada'].sum().nlargest(5).reset_index()
+            st.bar_chart(top_produtos.sort_values('Carga Projetada'), x="Carga Projetada", y="Produto", color="#E67E22", horizontal=True)
 
+    # --- DEMAIS ABAS ---
     col_config = {
         "Valor": st.column_config.ProgressColumn("Valor Base", format="R$ %.2f", min_value=0, max_value=float(df_vendas_aud['Valor'].max()) if not df_vendas_aud.empty else 1000),
         "vICMS": st.column_config.NumberColumn(format="R$ %.2f"),
@@ -239,13 +267,13 @@ if tem_dados:
         "Validação TIPI": st.column_config.TextColumn("TIPI", width="medium"),
     }
 
-    with tabs[1]:
+    with tabs[2]:
         if not df_vendas_aud.empty: st.dataframe(preparar_exibicao(df_vendas_aud), use_container_width=True, hide_index=True, column_config=col_config)
         else: st.info("Sem dados de Venda.")
-    with tabs[2]:
+    with tabs[3]:
         if not df_compras_aud.empty: st.dataframe(preparar_exibicao(df_compras_aud), use_container_width=True, hide_index=True, column_config=col_config)
         else: st.info("Sem dados de Compra.")
-    with tabs[3]:
+    with tabs[4]:
         c1, c2 = st.columns(2)
         if not df_vendas_aud.empty: c1.dataframe(df_vendas_aud[['Chave NFe']].drop_duplicates(), use_container_width=True)
         if not df_compras_aud.empty: c2.dataframe(df_compras_aud[['Chave NFe']].drop_duplicates(), use_container_width=True)

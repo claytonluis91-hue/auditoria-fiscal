@@ -133,11 +133,17 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliq_ibs, aliq_cbs):
     valor_prod = float(row.get('Valor', 0.0))
     tipo_op = row.get('Tipo', 'SAIDA')
     
+    # Carga Atual (ICMS + PIS + COFINS)
     v_icms = float(row.get('vICMS', 0))
     v_pis = float(row.get('vPIS', 0))
     v_cofins = float(row.get('vCOFINS', 0))
     imposto_atual = v_icms + v_pis + v_cofins
+    
+    # Base de Cálculo IBS/CBS (Valor Prod - Imposto Atual para evitar imposto sobre imposto)
+    # Na transição, a base pode ser o valor do produto, mas ajustamos para base limpa.
     base_liquida = max(0, valor_prod - imposto_atual)
+    # Para simplificar comparação, em muitos casos usa-se o valor cheio como referência de preço,
+    # mas a lógica de "imposto por fora" pede base limpa. Mantendo base limpa.
     
     ibs_padrao = base_liquida * aliq_ibs
     cbs_padrao = base_liquida * aliq_cbs
@@ -145,8 +151,6 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliq_ibs, aliq_cbs):
     v_cbs = cbs_padrao
     
     validacao = "⚠️ NCM Ausente (TIPI)"
-    
-    # Se o item é de SPED Perfil B (Sem NCM), não validamos TIPI
     if ncm == 'SEM_DETALHE':
         validacao = "ℹ️ SPED Perfil B"
     elif not df_tipi.empty:
@@ -188,7 +192,6 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliq_ibs, aliq_cbs):
         return cClassTrib, f"{regra['Descricao']} - {origem}", regra['Status'], cst_final, origem, validacao, imposto_atual, imposto_futuro, v_ibs, v_cbs
     
     else:
-        # Tenta fallback texto apenas se tiver NCM real
         if ncm != 'SEM_DETALHE':
             termo = "medicamentos" if ncm.startswith('30') else ("cesta básica" if ncm.startswith('10') else "tributação integral")
             if not df_json.empty and 'Busca' in df_json.columns:
@@ -200,7 +203,6 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliq_ibs, aliq_cbs):
 
     return '000001', 'Padrão - Tributação Integral', 'PADRAO', '000', origem, validacao, imposto_atual, v_ibs+v_cbs, v_ibs, v_cbs
 
-# --- PARSERS INTELIGENTES ---
 def extrair_nome_empresa_xml(tree, ns):
     root = tree.getroot()
     emit = root.find('.//ns:emit', ns)
@@ -250,7 +252,6 @@ def processar_sped_fiscal(arquivo):
     lines = conteudo.split('\n')
     mapa_produtos = {}
     
-    # Pass 1: Cadastro e Empresa
     for linha in lines:
         if not linha.startswith('|'): continue
         campos = linha.split('|')
@@ -258,18 +259,13 @@ def processar_sped_fiscal(arquivo):
         elif campos[1] == '0200' and len(campos) > 8:
             mapa_produtos[campos[2]] = {'NCM': campos[8], 'Produto': campos[3]}
 
-    # Pass 2: Notas (Lógica Mista C170/C190)
     nota_atual = None
     buffer_itens = []
     usou_c170 = False
     
-    # Função auxiliar para fechar a nota anterior
     def fechar_nota(nota, itens, usou_detalhe):
         if not nota: return
-        # Se achou C170, usa eles. Se não, usa C190 (Resumo)
-        # Se tiver os dois, C170 tem prioridade pois tem NCM
         lista_final = [i for i in itens if i['Origem'] == ('C170' if usou_detalhe else 'C190')]
-        
         if nota['Tipo'] == 'SAIDA': vendas.extend(lista_final)
         else: compras.extend(lista_final)
 
@@ -279,16 +275,10 @@ def processar_sped_fiscal(arquivo):
         reg = campos[1]
         
         if reg == 'C100':
-            # Fecha nota anterior antes de começar a nova
             fechar_nota(nota_atual, buffer_itens, usou_c170)
-            
-            # Nova Nota
             nota_atual = None
             buffer_itens = []
             usou_c170 = False
-            
-            # COD_SIT: Aceita 00 (Regular), 01 (Extemp) e 1 (Variação)
-            # Ignora Cancelada (02), Denegada (04), Inutilizada (05)
             cod_sit = campos[6]
             if cod_sit in ['00', '01', '1', '06', '6']: 
                 ind_oper = campos[2]
@@ -299,7 +289,6 @@ def processar_sped_fiscal(arquivo):
                 }
                 
         elif nota_atual:
-            # Item Detalhado (Melhor cenário)
             if reg == 'C170' and len(campos) > 10:
                 usou_c170 = True
                 cod_item = campos[3]
@@ -313,22 +302,17 @@ def processar_sped_fiscal(arquivo):
                     'vCOFINS': to_float(campos[26]) if len(campos)>26 else 0.0,
                     'Tipo': nota_atual['Tipo'], 'Origem': 'C170'
                 })
-                
-            # Item Resumido (Fallback para Perfil B)
             elif reg == 'C190' and len(campos) > 5:
-                # C190 não tem produto, criamos um genérico
                 cst = campos[2]
                 cfop = campos[3]
                 buffer_itens.append({
                     'Cód. Produto': 'RESUMO', 'Chave NFe': nota_atual['Chave'],
-                    'NCM': 'SEM_DETALHE', # Importante para o motor saber que é fallback
+                    'NCM': 'SEM_DETALHE',
                     'Produto': f"Resumo CST {cst} CFOP {cfop}",
                     'CFOP': cfop, 'Valor': to_float(campos[5]),
                     'vICMS': to_float(campos[7]), 'vPIS': 0.0, 'vCOFINS': 0.0,
                     'Tipo': nota_atual['Tipo'], 'Origem': 'C190'
                 })
 
-    # Fecha a última nota do arquivo
     fechar_nota(nota_atual, buffer_itens, usou_c170)
-
     return nome_empresa, vendas, compras
