@@ -210,14 +210,21 @@ if modo_app == "📊 Auditoria & Reforma":
 
     if tem_dados:
         st.markdown("---")
-        abas = ["💎 Oportunidades & Riscos", "📊 Dashboard", "⚖️ Simulação", "📤 Saídas", "📥 Entradas"]
+        
+        # --- DEFINIÇÃO DA ORDEM DAS ABAS (PEDIDO DO CLAYTON) ---
+        abas = ["📤 Saídas", "📥 Entradas", "⚖️ Simulação", "📊 Dashboard", "💎 Oportunidades & Riscos"]
+        
+        # Cruzamento entra em 1º SE existir
         tem_cruzamento = (not df_xml_v.empty or not df_xml_c.empty) and (not df_sped_v.empty or not df_sped_c.empty)
         if tem_cruzamento: abas.insert(0, "⚔️ Cruzamento XML x SPED")
             
         tabs = st.tabs(abas)
         
+        # --- LÓGICA DE PREENCHIMENTO DAS ABAS (DINÂMICA) ---
+        
+        # 1. ABA CRUZAMENTO (Opcional)
         if tem_cruzamento:
-            with tabs[0]:
+            with tabs[abas.index("⚔️ Cruzamento XML x SPED")]:
                 st.markdown("### ⚔️ Auditoria Cruzada")
                 xml_val = df_xml_v.groupby('Chave NFe')['Valor'].sum().reset_index().rename(columns={'Valor':'V_XML'}) if not df_xml_v.empty else pd.DataFrame(columns=['Chave NFe', 'V_XML'])
                 sped_val = df_sped_v.groupby('Chave NFe')['Valor'].sum().reset_index().rename(columns={'Valor':'V_SPED'}) if not df_sped_v.empty else pd.DataFrame(columns=['Chave NFe', 'V_SPED'])
@@ -233,64 +240,90 @@ if modo_app == "📊 Auditoria & Reforma":
                 if not so_xml.empty: st.error("🚨 Notas fora do SPED:"); st.dataframe(so_xml)
                 if not div.empty: st.warning("⚠️ Valores Divergentes:"); st.dataframe(div)
 
-        idx = 1 if tem_cruzamento else 0
-        with tabs[idx]:
-            st.markdown("### 💎 Análise de Inteligência Fiscal")
-            if not df_final_v.empty:
-                # Segurança Extra: Verifica se a coluna 'Status' existe antes de filtrar
-                if 'Status' in df_final_v.columns:
-                    op = df_final_v[(df_final_v['Carga Atual']>0) & (df_final_v['Status'].str.contains("ZERO") | df_final_v['Status'].str.contains("REDUZIDA"))].copy()
-                    ri = df_final_v[(df_final_v['Carga Atual']==0) & (df_final_v['Status']=="PADRAO")]
-                    
-                    c1, c2 = st.columns(2)
-                    c1.metric("💰 Recuperável", f"R$ {op['Carga Atual'].sum():,.2f}")
-                    c2.metric("⚠️ Risco", f"R$ {ri['Carga Projetada'].sum():,.2f}")
-                    
-                    if not op.empty:
-                        st.success("Itens pagando a mais:")
-                        st.dataframe(op[['Produto', 'NCM', 'Carga Atual', 'DescRegra']])
-                        st.markdown('<div class="correction-box">', unsafe_allow_html=True)
-                        st.markdown("#### 🛠️ Kit de Correção")
-                        df_cor = op[['Cód. Produto', 'Produto', 'NCM', 'DescRegra']].copy()
-                        df_cor.columns = ['COD', 'DESCRICAO', 'NCM_ATUAL', 'REGRA_SUGERIDA']
-                        st.download_button("📥 BAIXAR CSV", convert_df_to_csv(df_cor), "Correcao.csv", "text/csv")
-                        st.markdown('</div>', unsafe_allow_html=True)
+        # 2. ABA SAÍDAS
+        with tabs[abas.index("📤 Saídas")]:
+            if not df_final_v.empty: st.dataframe(preparar_exibicao(df_final_v), use_container_width=True)
+            else: st.info("Sem dados de Saída.")
 
-                    if not ri.empty: st.error("Itens pagando a menos:"); st.dataframe(ri[['Produto', 'NCM', 'DescRegra']])
+        # 3. ABA ENTRADAS
+        with tabs[abas.index("📥 Entradas")]:
+            if not df_final_c.empty: st.dataframe(preparar_exibicao(df_final_c), use_container_width=True)
+            else: st.info("Sem dados de Entrada.")
 
-        idx += 1
-        with tabs[idx]:
+        # 4. ABA SIMULAÇÃO
+        with tabs[abas.index("⚖️ Simulação")]:
+            st.markdown("### Comparativo")
+            # Proteção contra coluna inexistente
+            atu = df_final_v['Carga Atual'].sum() if 'Carga Atual' in df_final_v.columns else 0.0
+            nov = df_final_v['Carga Projetada'].sum() if 'Carga Projetada' in df_final_v.columns else 0.0
+            try:
+                st.bar_chart(pd.DataFrame({'Cenário':['Atual','Novo'], 'Valor':[float(atu),float(nov)]}).set_index('Cenário')['Valor'])
+            except: st.warning("Gráfico indisponível.")
+
+        # 5. ABA DASHBOARD
+        with tabs[abas.index("📊 Dashboard")]:
             st.markdown("### Visão Geral")
-            # --- CORREÇÃO DO ERRO (KEYERROR) ---
-            # Verifica se a coluna existe antes de somar. Se não existir, soma 0.
             d = df_final_v['Carga Projetada'].sum() if 'Carga Projetada' in df_final_v.columns else 0.0
             c = df_final_c['Carga Projetada'].sum() if 'Carga Projetada' in df_final_c.columns else 0.0
-            
             k1, k2, k3 = st.columns(3)
             k1.metric("Débitos", f"R$ {d:,.2f}"); k2.metric("Créditos", f"R$ {c:,.2f}"); k3.metric("Saldo", f"R$ {d-c:,.2f}")
             try:
-                # Proteção para o gráfico também
                 if 'Carga Projetada' in df_final_v.columns:
                     top = df_final_v.groupby('Produto')['Carga Projetada'].sum().nlargest(5).reset_index()
                     st.bar_chart(top.set_index('Produto')['Carga Projetada'])
             except: pass
 
-        idx += 1
-        with tabs[idx]:
-            st.markdown("### Comparativo")
-            # --- CORREÇÃO AQUI TAMBÉM ---
-            atu = df_final_v['Carga Atual'].sum() if 'Carga Atual' in df_final_v.columns else 0.0
-            nov = df_final_v['Carga Projetada'].sum() if 'Carga Projetada' in df_final_v.columns else 0.0
-            try:
-                st.bar_chart(pd.DataFrame({'Cenário':['Atual','Novo'], 'Valor':[float(atu),float(nov)]}).set_index('Cenário')['Valor'])
-            except: pass
+        # 6. ABA OPORTUNIDADES
+        with tabs[abas.index("💎 Oportunidades & Riscos")]:
+            st.markdown("### 💎 Análise de Inteligência Fiscal")
+            if not df_final_v.empty and 'Status' in df_final_v.columns:
+                op = df_final_v[(df_final_v['Carga Atual']>0) & (df_final_v['Status'].str.contains("ZERO") | df_final_v['Status'].str.contains("REDUZIDA"))].copy()
+                ri = df_final_v[(df_final_v['Carga Atual']==0) & (df_final_v['Status']=="PADRAO")]
+                
+                c1, c2 = st.columns(2)
+                c1.metric("💰 Recuperável", f"R$ {op['Carga Atual'].sum():,.2f}")
+                c2.metric("⚠️ Risco", f"R$ {ri['Carga Projetada'].sum():,.2f}")
+                
+                if not op.empty:
+                    st.success("Itens pagando a mais:")
+                    st.dataframe(op[['Produto', 'NCM', 'Carga Atual', 'DescRegra']], use_container_width=True)
+                    st.markdown('<div class="correction-box">', unsafe_allow_html=True)
+                    st.markdown("#### 🛠️ Kit de Correção")
+                    df_cor = op[['Cód. Produto', 'Produto', 'NCM', 'DescRegra']].copy()
+                    df_cor.columns = ['COD', 'DESCRICAO', 'NCM_ATUAL', 'REGRA_SUGERIDA']
+                    st.download_button("📥 BAIXAR CSV", convert_df_to_csv(df_cor), "Correcao.csv", "text/csv")
+                    st.markdown('</div>', unsafe_allow_html=True)
 
-        with tabs[idx+1]: st.dataframe(preparar_exibicao(df_final_v))
-        with tabs[idx+2]: st.dataframe(preparar_exibicao(df_final_c))
+                if not ri.empty: st.error("Itens pagando a menos:"); st.dataframe(ri[['Produto', 'NCM', 'DescRegra']], use_container_width=True)
+            else:
+                st.info("Necessário dados de Venda para análise de oportunidades.")
+
+        # --- EXPORTAR RELATÓRIOS (RESGATADO E FIXO NO FINAL) ---
+        st.markdown("---")
+        st.markdown("### 📥 Exportar Relatórios Completos")
+        c1, c2 = st.columns(2)
+        with c1:
+            try:
+                # Gera PDF se houver qualquer dado
+                if not df_final_v.empty or not df_final_c.empty:
+                    pdf = relatorio.gerar_pdf_bytes(st.session_state.empresa_nome, df_final_v, df_final_c)
+                    st.download_button("📄 BAIXAR LAUDO PDF", pdf, "Laudo_Auditoria.pdf", "application/pdf", use_container_width=True)
+            except: st.error("Erro ao gerar PDF.")
+        with c2:
+            buf = io.BytesIO()
+            with pd.ExcelWriter(buf, engine='openpyxl') as writer:
+                # Exporta na ordem solicitada
+                if not df_final_v.empty: preparing_df = preparar_exibicao(df_final_v); preparing_df.to_excel(writer, sheet_name="Saidas", index=False)
+                if not df_final_c.empty: preparing_df = preparar_exibicao(df_final_c); preparing_df.to_excel(writer, sheet_name="Entradas", index=False)
+                if tem_cruzamento:
+                    if 'so_xml' in locals() and not so_xml.empty: so_xml.to_excel(writer, sheet_name="Omissao_SPED", index=False)
+                    if 'div' in locals() and not div.empty: div.to_excel(writer, sheet_name="Divergencia_Valor", index=False)
+                if 'op' in locals() and not op.empty: op.to_excel(writer, sheet_name="Oportunidades", index=False)
+            st.download_button("📊 BAIXAR EXCEL COMPLETO", buf, "Auditoria_Dados.xlsx", "primary", use_container_width=True)
 
 
 # ==============================================================================
-# MODO 2: COMPARADOR SPED VS SPED
+# MODO 2: COMPARADOR SPED VS SPED (BLINDADO)
 # ==============================================================================
 elif modo_app == "⚔️ Comparador SPED vs SPED":
     st.markdown("""
