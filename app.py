@@ -18,27 +18,25 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- ESTADO ---
-# Modo Auditoria
-if 'xml_vendas_df' not in st.session_state: st.session_state.xml_vendas_df = pd.DataFrame()
-if 'xml_compras_df' not in st.session_state: st.session_state.xml_compras_df = pd.DataFrame()
-if 'sped_vendas_df' not in st.session_state: st.session_state.sped_vendas_df = pd.DataFrame()
-if 'sped_compras_df' not in st.session_state: st.session_state.sped_compras_df = pd.DataFrame()
+# --- ESTADO (SESSION STATE) ---
+# Inicializa variáveis com segurança
+def init_state(key, default):
+    if key not in st.session_state:
+        st.session_state[key] = default
 
-# Modo Comparador
-if 'sped1_vendas' not in st.session_state: st.session_state.sped1_vendas = pd.DataFrame()
-if 'sped1_compras' not in st.session_state: st.session_state.sped1_compras = pd.DataFrame()
-if 'sped2_vendas' not in st.session_state: st.session_state.sped2_vendas = pd.DataFrame()
-if 'sped2_compras' not in st.session_state: st.session_state.sped2_compras = pd.DataFrame()
-
-if 'empresa_nome' not in st.session_state: st.session_state.empresa_nome = "Nenhuma Empresa"
-if 'uploader_key' not in st.session_state: st.session_state.uploader_key = 0
+init_state('xml_vendas_df', pd.DataFrame())
+init_state('xml_compras_df', pd.DataFrame())
+init_state('sped_vendas_df', pd.DataFrame())
+init_state('sped_compras_df', pd.DataFrame())
+init_state('sped1_vendas', pd.DataFrame())
+init_state('sped1_compras', pd.DataFrame())
+init_state('sped2_vendas', pd.DataFrame())
+init_state('sped2_compras', pd.DataFrame())
+init_state('empresa_nome', "Nenhuma Empresa")
+init_state('uploader_key', 0)
 
 def reset_all():
-    # Limpa tudo
-    for key in list(st.session_state.keys()):
-        if key != 'uploader_key':
-            del st.session_state[key]
+    # Reseta forçado
     st.session_state.xml_vendas_df = pd.DataFrame()
     st.session_state.xml_compras_df = pd.DataFrame()
     st.session_state.sped_vendas_df = pd.DataFrame()
@@ -77,7 +75,6 @@ st.markdown("""
         border: 1px solid #ABEBC6; margin-top: 5px; margin-bottom: 10px; font-weight: 600; text-align: center;
     }
     
-    /* Botão de Correção */
     .correction-box {
         background-color: #FEF9E7; border: 1px solid #F39C12; padding: 20px; border-radius: 10px; margin-top: 20px;
     }
@@ -90,7 +87,7 @@ def carregar_bases(): return motor.carregar_base_legal(), motor.carregar_json_re
 @st.cache_data
 def carregar_tipi_cache(file): return motor.carregar_tipi(file)
 
-# --- SIDEBAR & NAVEGAÇÃO ---
+# --- SIDEBAR ---
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/3029/3029337.png", width=50)
     
@@ -103,7 +100,6 @@ with st.sidebar:
         if st.session_state.empresa_nome != "Nenhuma Empresa":
             st.success(f"🏢 {st.session_state.empresa_nome}")
         
-        st.markdown("#### ⚙️ Parâmetros Fiscais")
         c1, c2 = st.columns(2)
         with c1: aliq_ibs = st.number_input("IBS (%)", 0.0, 50.0, 17.7, 0.1)
         with c2: aliq_cbs = st.number_input("CBS (%)", 0.0, 50.0, 8.8, 0.1)
@@ -115,7 +111,7 @@ with st.sidebar:
                 st.rerun()
                 
     elif modo_app == "⚔️ Comparador SPED vs SPED":
-        st.info("ℹ️ Compare o arquivo do cliente com o do seu ERP para validar a importação.")
+        st.info("ℹ️ Validação de Arquivos.")
 
     st.markdown("<br>", unsafe_allow_html=True)
     if st.button("🗑️ LIMPAR TUDO", type="secondary"):
@@ -125,7 +121,7 @@ with st.sidebar:
     mapa_lei, df_regras_json = carregar_bases()
     df_tipi = carregar_tipi_cache(uploaded_tipi)
 
-# --- FUNÇÕES AUXILIARES ---
+# --- FUNÇÕES ---
 ns = {'ns': 'http://www.portalfiscal.inf.br/nfe'}
 
 def convert_df_to_csv(df):
@@ -203,7 +199,6 @@ if modo_app == "📊 Auditoria & Reforma":
                     st.session_state.sped_compras_df = pd.DataFrame(compras)
                     st.rerun()
 
-    # Processamento
     df_xml_v = auditar_df(st.session_state.xml_vendas_df.copy())
     df_xml_c = auditar_df(st.session_state.xml_compras_df.copy())
     df_sped_v = auditar_df(st.session_state.sped_vendas_df.copy())
@@ -252,13 +247,11 @@ if modo_app == "📊 Auditoria & Reforma":
                 if not op.empty:
                     st.success("Itens pagando a mais:")
                     st.dataframe(op[['Produto', 'NCM', 'Carga Atual', 'DescRegra']])
-                    
                     st.markdown('<div class="correction-box">', unsafe_allow_html=True)
                     st.markdown("#### 🛠️ Kit de Correção")
-                    df_correcao = op[['Cód. Produto', 'Produto', 'NCM', 'DescRegra']].copy()
-                    df_correcao.columns = ['COD', 'DESCRICAO', 'NCM_ATUAL', 'REGRA_SUGERIDA']
-                    csv = convert_df_to_csv(df_correcao)
-                    st.download_button("📥 BAIXAR CORREÇÃO (.CSV)", csv, "Correcao.csv", "text/csv")
+                    df_cor = op[['Cód. Produto', 'Produto', 'NCM', 'DescRegra']].copy()
+                    df_cor.columns = ['COD', 'DESCRICAO', 'NCM_ATUAL', 'REGRA_SUGERIDA']
+                    st.download_button("📥 BAIXAR CSV", convert_df_to_csv(df_cor), "Correcao.csv", "text/csv")
                     st.markdown('</div>', unsafe_allow_html=True)
 
                 if not ri.empty: st.error("Itens pagando a menos:"); st.dataframe(ri[['Produto', 'NCM', 'DescRegra']])
@@ -287,7 +280,7 @@ if modo_app == "📊 Auditoria & Reforma":
 
 
 # ==============================================================================
-# MODO 2: COMPARADOR SPED VS SPED (CORRIGIDO E BLINDADO)
+# MODO 2: COMPARADOR SPED VS SPED
 # ==============================================================================
 elif modo_app == "⚔️ Comparador SPED vs SPED":
     st.markdown("""
@@ -299,43 +292,41 @@ elif modo_app == "⚔️ Comparador SPED vs SPED":
     
     col1, col2 = st.columns(2)
     
+    # --- LIMPEZA AUTOMÁTICA DE MEMÓRIA SUJA ---
+    # Se o uploader estiver vazio, garante que o dataframe esteja vazio
+    
     with col1:
         st.markdown("### 📁 1. SPED Original")
         file1 = st.file_uploader("Upload SPED Cliente", type=['txt'], key="sped1")
-        if file1 and st.session_state.sped1_vendas.empty:
+        if not file1: 
+            st.session_state.sped1_vendas = pd.DataFrame()
+        elif file1 and st.session_state.sped1_vendas.empty:
             with st.spinner("Lendo Arquivo A..."):
                 n1, v1, c1 = motor.processar_sped_fiscal(file1)
                 st.session_state.sped1_vendas = pd.DataFrame(v1)
                 st.session_state.sped1_compras = pd.DataFrame(c1)
-                st.success(f"Arquivo A: {len(v1)} Vendas")
                 st.rerun()
                 
     with col2:
         st.markdown("### 💻 2. SPED Gerado")
         file2 = st.file_uploader("Upload SPED ERP", type=['txt'], key="sped2")
-        if file2 and st.session_state.sped2_vendas.empty:
+        if not file2:
+            st.session_state.sped2_vendas = pd.DataFrame()
+        elif file2 and st.session_state.sped2_vendas.empty:
             with st.spinner("Lendo Arquivo B..."):
                 n2, v2, c2 = motor.processar_sped_fiscal(file2)
                 st.session_state.sped2_vendas = pd.DataFrame(v2)
                 st.session_state.sped2_compras = pd.DataFrame(c2)
-                st.success(f"Arquivo B: {len(v2)} Vendas")
                 st.rerun()
 
     df1 = st.session_state.sped1_vendas
     df2 = st.session_state.sped2_vendas
     
+    # --- BLINDAGEM CONTRA ARQUIVO VAZIO ---
     if not df1.empty and not df2.empty:
-        # --- BLINDAGEM DE COLUNAS (CORREÇÃO AQUI) ---
-        cols_req = ['Chave NFe', 'Valor']
-        erro_cols = False
-        if not all(col in df1.columns for col in cols_req):
-            st.error("❌ O Arquivo A (Cliente) não possui registros de venda (C100/C190) válidos para comparação.")
-            erro_cols = True
-        if not all(col in df2.columns for col in cols_req):
-            st.error("❌ O Arquivo B (ERP) não possui registros de venda (C100/C190) válidos para comparação.")
-            erro_cols = True
-            
-        if not erro_cols:
+        required = ['Chave NFe', 'Valor']
+        # Verifica se as colunas existem antes de tentar calcular
+        if all(col in df1.columns for col in required) and all(col in df2.columns for col in required):
             st.divider()
             st.markdown("### 📊 Resultado da Comparação (Vendas/Saídas)")
             
@@ -361,5 +352,8 @@ elif modo_app == "⚔️ Comparador SPED vs SPED":
                 if not so_no_cliente.empty: st.error("🚨 Notas SUMIRAM no ERP:"); st.dataframe(so_no_cliente)
                 if not so_no_erp.empty: st.warning("⚠️ Notas EXTRAS no ERP:"); st.dataframe(so_no_erp)
                 if not divergentes.empty: st.warning("💰 Valores Alterados:"); st.dataframe(divergentes)
+                if so_no_cliente.empty and so_no_erp.empty and divergentes.empty: st.success("Perfeito!")
             with t2:
                 st.success(f"{len(iguais)} Notas conferem."); st.dataframe(iguais)
+        else:
+            st.warning("⚠️ Um dos arquivos não possui registros de venda válidos (C100/C190).")
