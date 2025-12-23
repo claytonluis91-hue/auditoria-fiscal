@@ -5,6 +5,7 @@ import io
 import motor 
 import importlib
 import relatorio
+import requests
 
 # Recarrega módulos
 importlib.reload(motor)
@@ -26,7 +27,6 @@ def init_df(key, columns=None):
         else:
             st.session_state[key] = pd.DataFrame()
 
-# Inicializa DataFrames
 cols_padrao = ['Chave NFe', 'Valor', 'Produto', 'NCM']
 init_df('xml_vendas_df', cols_padrao)
 init_df('xml_compras_df', cols_padrao)
@@ -36,7 +36,8 @@ init_df('sped1_vendas', cols_padrao)
 init_df('sped1_compras', cols_padrao)
 init_df('sped2_vendas', cols_padrao)
 init_df('sped2_compras', cols_padrao)
-# Inicializa a tabela NBS como None para saber se foi carregada
+
+# NBS Cache (para não baixar toda hora)
 if 'df_nbs' not in st.session_state: st.session_state.df_nbs = None
 
 if 'empresa_nome' not in st.session_state: st.session_state.empresa_nome = "Nenhuma Empresa"
@@ -45,7 +46,6 @@ if 'uploader_key' not in st.session_state: st.session_state.uploader_key = 0
 def reset_all():
     for key in list(st.session_state.keys()):
         if 'df' in key or 'sped' in key:
-            # PRESERVA A TABELA NBS (Não apaga se limpar a auditoria)
             if key != 'df_nbs': 
                 st.session_state[key] = pd.DataFrame(columns=cols_padrao)
     st.session_state.empresa_nome = "Nenhuma Empresa"
@@ -85,6 +85,22 @@ def carregar_bases(): return motor.carregar_base_legal(), motor.carregar_json_re
 @st.cache_data
 def carregar_tipi_cache(file): return motor.carregar_tipi(file)
 
+# Função Inteligente para Baixar NBS do Governo
+@st.cache_data(ttl=3600) # Cache por 1 hora
+def baixar_nbs_gov():
+    url = "https://www.gov.br/mdic/pt-br/images/REPOSITORIO/scs/decos/NBS/NBSa_2-0.csv"
+    try:
+        # Tenta baixar direto (com verify=False para evitar erro de certificado do gov)
+        response = requests.get(url, verify=False, timeout=10)
+        if response.status_code == 200:
+            # Lê o CSV direto da memória
+            content = response.content.decode('latin1') # Governo usa latin1 geralmente
+            df = pd.read_csv(io.StringIO(content), sep=';', dtype=str)
+            return df
+        return None
+    except:
+        return None
+
 # --- SIDEBAR ---
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/2910/2910768.png", width=70)
@@ -92,7 +108,7 @@ with st.sidebar:
     st.markdown("### Selecione o Modo:")
     modo_app = st.radio(
         "Modo de Operação", 
-        ["📊 Auditoria & Reforma", "⚔️ Comparador SPED vs SPED", "🔍 Consulta NBS/cClass"], 
+        ["📊 Auditoria & Reforma", "⚔️ Comparador SPED vs SPED", "🔍 Consulta NBS Online"], 
         label_visibility="collapsed"
     )
     st.divider()
@@ -111,8 +127,8 @@ with st.sidebar:
                 carregar_bases.clear()
                 st.rerun()
     
-    elif modo_app == "🔍 Consulta NBS/cClass":
-        st.info("ℹ️ Base oficial da Receita Federal (XLSX).")
+    elif modo_app == "🔍 Consulta NBS Online":
+        st.info("ℹ️ Conectado à base do MDIC/Gov.br")
 
     st.markdown("<br>", unsafe_allow_html=True)
     if st.button("🗑️ LIMPAR TUDO", type="secondary"):
@@ -214,6 +230,7 @@ if modo_app == "📊 Auditoria & Reforma":
     if tem_dados:
         st.markdown("---")
         abas = ["📤 Saídas", "📥 Entradas", "⚖️ Simulação", "📊 Dashboard"]
+        
         tem_cruzamento = (not df_xml_v.empty or not df_xml_c.empty) and (not df_sped_v.empty or not df_sped_c.empty)
         if tem_cruzamento: abas.insert(0, "⚔️ Cruzamento XML x SPED")
             
@@ -358,45 +375,52 @@ elif modo_app == "⚔️ Comparador SPED vs SPED":
         st.info("Aguardando arquivos válidos para comparação...")
 
 # ==============================================================================
-# MODO 3: CONSULTA NBS/cClass (NOVO COM XLSX)
+# MODO 3: CONSULTA NBS ONLINE (AUTOMÁTICA)
 # ==============================================================================
-elif modo_app == "🔍 Consulta NBS/cClass":
+elif modo_app == "🔍 Consulta NBS Online":
     st.markdown("""
     <div class="header-container">
-        <div class="main-header">Consultor de Serviços</div>
-        <div class="sub-header">Mapeamento Inteligente: Serviço -> NBS -> cClass (IBS/CBS)</div>
+        <div class="main-header">Consultor de Serviços (NBS Online)</div>
+        <div class="sub-header">Base Atualizada Automaticamente via Gov.br</div>
     </div>
     """, unsafe_allow_html=True)
     
-    st.info("💡 Carregue a Tabela da Receita Federal em **Excel (.xlsx)**.")
+    # 1. TENTA CARREGAR DO GOVERNO
+    if st.session_state.df_nbs is None:
+        with st.spinner("🔄 Conectando ao servidor do MDIC/Governo..."):
+            df = baixar_nbs_gov()
+            if df is not None:
+                st.session_state.df_nbs = df
+                st.success("✅ Tabela NBS Oficial Carregada!")
+            else:
+                st.warning("⚠️ Não foi possível baixar automaticamente do Gov.br (Site instável ou sem internet).")
+                st.info("👇 Por favor, carregue o arquivo manualmente se tiver.")
     
-    # Upload EXCEL
-    uploaded_nbs = st.file_uploader("Carregar Tabela NBS (XLSX)", type=['xlsx'])
-    
-    if uploaded_nbs:
-        if st.session_state.df_nbs is None:
+    # 2. SE FALHAR, MOSTRA O UPLOAD
+    if st.session_state.df_nbs is None:
+        uploaded_nbs = st.file_uploader("Upload Manual da NBS (CSV ou Excel)", type=['csv', 'xlsx'])
+        if uploaded_nbs:
             try:
-                with st.spinner("Processando planilha (isso pode demorar um pouco)..."):
-                    # Lê como string para preservar zeros à esquerda
+                if uploaded_nbs.name.endswith('.csv'):
+                    df = pd.read_csv(uploaded_nbs, sep=';', encoding='latin1', dtype=str)
+                else:
                     df = pd.read_excel(uploaded_nbs, dtype=str)
-                    st.session_state.df_nbs = df
+                st.session_state.df_nbs = df
+                st.rerun()
             except Exception as e:
-                st.error(f"Erro ao ler o Excel: {e}")
+                st.error(f"Erro ao ler arquivo: {e}")
 
-    # SE TIVER DADOS, MOSTRA A BUSCA
+    # 3. MOSTRA A BUSCA (SE TIVER DADOS)
     if st.session_state.df_nbs is not None and not st.session_state.df_nbs.empty:
-        st.success("✅ Tabela Carregada com Sucesso!")
         st.markdown("---")
-        termo = st.text_input("🔍 **Digite para pesquisar (Código, Descrição, Palavra-chave):**", placeholder="Ex: Limpeza, Vigilância, 1.01...")
+        termo = st.text_input("🔍 **Pesquisar Serviço (Nome ou Código):**", placeholder="Ex: Limpeza, 1.05, Vigilância...")
         
         if termo:
-            # BUSCA UNIVERSAL
             mask = st.session_state.df_nbs.apply(lambda x: x.astype(str).str.contains(termo, case=False, na=False)).any(axis=1)
             resultado = st.session_state.df_nbs[mask]
             
-            st.markdown(f"**Encontrados: {len(resultado)} registros**")
+            st.markdown(f"**Resultados: {len(resultado)}**")
             st.dataframe(resultado, use_container_width=True)
         else:
-            st.markdown("👆 *Digite algo acima para filtrar a tabela.*")
             with st.expander("Ver Tabela Completa (Amostra)"):
                 st.dataframe(st.session_state.df_nbs.head(100), use_container_width=True)
