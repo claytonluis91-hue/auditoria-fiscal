@@ -68,18 +68,10 @@ st.markdown("""
     
     .streamlit-expanderHeader { font-weight: 600; color: #34495E; background-color: #FFFFFF; border: 1px solid #E0E0E0; border-radius: 5px; }
     
-    /* Box de Sucesso Customizado (para os arquivos) */
+    /* Box Sucesso */
     .file-success {
-        background-color: #D5F5E3;
-        color: #196F3D;
-        padding: 10px;
-        border-radius: 5px;
-        border: 1px solid #ABEBC6;
-        margin-top: 5px;
-        margin-bottom: 10px;
-        font-size: 0.9rem;
-        text-align: center;
-        font-weight: 600;
+        background-color: #D5F5E3; color: #196F3D; padding: 10px; border-radius: 5px;
+        border: 1px solid #ABEBC6; margin-top: 5px; margin-bottom: 10px; font-weight: 600; text-align: center;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -95,33 +87,29 @@ with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/3029/3029337.png", width=50)
     if st.session_state.empresa_nome != "Nenhuma Empresa":
         st.markdown(f"### 🏢 {st.session_state.empresa_nome}")
-        
         qtd_xml = len(st.session_state.xml_vendas_df) + len(st.session_state.xml_compras_df)
         qtd_sped = len(st.session_state.sped_vendas_df) + len(st.session_state.sped_compras_df)
         
-        if qtd_xml > 0 and qtd_sped > 0:
-            st.success(f"⚔️ Modo Cruzamento\n\nXML: {qtd_xml} itens\nSPED: {qtd_sped} itens")
-        elif qtd_xml > 0:
-            st.info(f"📄 XML Carregado\n({qtd_xml} itens)")
-        elif qtd_sped > 0:
-            st.warning(f"📝 SPED Carregado\n({qtd_sped} itens)")
-
+        if qtd_xml > 0 and qtd_sped > 0: st.success(f"⚔️ Modo Cruzamento\nXML: {qtd_xml} | SPED: {qtd_sped}")
+        elif qtd_xml > 0: st.info(f"📄 XML Carregado\n({qtd_xml} itens)")
+        elif qtd_sped > 0: st.warning(f"📝 SPED Carregado\n({qtd_sped} itens)")
     else:
         st.markdown("### 🔍 Auditoria Fiscal")
         st.caption("Aguardando Arquivos...")
     
     st.divider()
-    st.markdown("#### ⚙️ Parâmetros Fiscais")
     c1, c2 = st.columns(2)
     with c1: aliq_ibs = st.number_input("IBS (%)", 0.0, 50.0, 17.7, 0.1)
     with c2: aliq_cbs = st.number_input("CBS (%)", 0.0, 50.0, 8.8, 0.1)
-    with st.expander("📂 Atualizar Tabela TIPI"):
-        uploaded_tipi = st.file_uploader("TIPI (.xlsx)", type=['xlsx', 'csv'])
-        if st.button("🔄 Recarregar Motor"):
+    
+    with st.expander("📂 Atualizar TIPI"):
+        uploaded_tipi = st.file_uploader("TIPI", type=['xlsx', 'csv'])
+        if st.button("🔄 Recarregar"):
             carregar_bases.clear()
             st.rerun()
+            
     st.markdown("<br>", unsafe_allow_html=True)
-    if st.button("🗑️ LIMPAR AUDITORIA", type="secondary"):
+    if st.button("🗑️ LIMPAR TUDO", type="secondary"):
         reset_all()
         st.rerun()
 
@@ -141,7 +129,7 @@ ns = {'ns': 'http://www.portalfiscal.inf.br/nfe'}
 def processar_arquivos_com_barra(arquivos, tipo):
     lista = []
     total = len(arquivos)
-    barra = st.progress(0, text=f"⏳ Iniciando leitura de {total} arquivos...")
+    barra = st.progress(0, text=f"⏳ Lendo {total} arquivos...")
     for i, arquivo in enumerate(arquivos):
         progresso = (i + 1) / total
         barra.progress(progresso, text=f"Lendo {i+1}/{total}: {arquivo.name}")
@@ -154,28 +142,18 @@ def processar_arquivos_com_barra(arquivos, tipo):
     barra.empty()
     return lista
 
-# === ÁREA DE UPLOAD UNIFICADA (COM O CONTADOR DE VOLTA!) ===
-st.markdown("### 📂 Central de Arquivos (Carregue XML e/ou SPED)")
+# --- UPLOAD ---
+st.markdown("### 📂 Central de Arquivos")
 c_xml, c_sped = st.columns(2)
 
 with c_xml:
     with st.expander("📄 Carregar XMLs (Notas Fiscais)", expanded=True):
-        st.markdown("**Saídas (Vendas):**")
-        vendas_files = st.file_uploader("Upload Vendas", type=['xml'], accept_multiple_files=True, key=f"v_{st.session_state.uploader_key}", label_visibility="collapsed")
+        vendas_files = st.file_uploader("XML Vendas", type=['xml'], accept_multiple_files=True, key=f"v_{st.session_state.uploader_key}", label_visibility="collapsed")
+        if vendas_files: st.markdown(f'<div class="file-success">✅ {len(vendas_files)} XMLs Venda</div>', unsafe_allow_html=True)
         
-        # --- AQUI ESTÁ ELE DE VOLTA ---
-        if vendas_files:
-            st.markdown(f'<div class="file-success">✅ {len(vendas_files)} XMLs de Saída Selecionados</div>', unsafe_allow_html=True)
-        # ------------------------------
+        compras_files = st.file_uploader("XML Compras", type=['xml'], accept_multiple_files=True, key=f"c_{st.session_state.uploader_key}", label_visibility="collapsed")
+        if compras_files: st.markdown(f'<div class="file-success">✅ {len(compras_files)} XMLs Compra</div>', unsafe_allow_html=True)
 
-        st.markdown("**Entradas (Compras):**")
-        compras_files = st.file_uploader("Upload Compras", type=['xml'], accept_multiple_files=True, key=f"c_{st.session_state.uploader_key}", label_visibility="collapsed")
-        
-        # --- AQUI TAMBÉM ---
-        if compras_files:
-            st.markdown(f'<div class="file-success">✅ {len(compras_files)} XMLs de Entrada Selecionados</div>', unsafe_allow_html=True)
-        # -------------------
-        
         if vendas_files and st.session_state.xml_vendas_df.empty:
             st.session_state.xml_vendas_df = pd.DataFrame(processar_arquivos_com_barra(vendas_files, 'SAIDA'))
             st.rerun()
@@ -184,23 +162,19 @@ with c_xml:
             st.rerun()
 
 with c_sped:
-    with st.expander("📝 Carregar SPED Fiscal (TXT)", expanded=True):
-        sped_file = st.file_uploader("Arquivo SPED", type=['txt'], accept_multiple_files=False, key=f"s_{st.session_state.uploader_key}", label_visibility="collapsed")
-        
-        # --- FEEDBACK DO SPED TAMBÉM ---
-        if sped_file:
-            st.markdown(f'<div class="file-success">✅ Arquivo SPED Pronto</div>', unsafe_allow_html=True)
-        # -------------------------------
+    with st.expander("📝 Carregar SPED Fiscal", expanded=True):
+        sped_file = st.file_uploader("SPED TXT", type=['txt'], accept_multiple_files=False, key=f"s_{st.session_state.uploader_key}", label_visibility="collapsed")
+        if sped_file: st.markdown(f'<div class="file-success">✅ SPED Pronto</div>', unsafe_allow_html=True)
         
         if sped_file and st.session_state.sped_vendas_df.empty:
-            with st.spinner("Lendo SPED..."):
+            with st.spinner("Processando SPED..."):
                 nome, vendas, compras = motor.processar_sped_fiscal(sped_file)
                 st.session_state.empresa_nome = nome
                 st.session_state.sped_vendas_df = pd.DataFrame(vendas)
                 st.session_state.sped_compras_df = pd.DataFrame(compras)
                 st.rerun()
 
-# === LÓGICA DE AUDITORIA ===
+# --- AUDITORIA ---
 def auditar_df(df):
     if df.empty: return df
     res = df.apply(lambda row: motor.classificar_item(row, mapa_lei, df_regras_json, df_tipi, aliq_ibs/100, aliq_cbs/100), axis=1, result_type='expand')
@@ -225,133 +199,152 @@ if tem_dados:
 
     st.markdown("---")
     
-    # SELECIONA ABAS
-    abas = ["📊 Dashboard Financeiro", "⚖️ Simulação Reforma", "📤 Saídas", "📥 Entradas"]
+    abas = ["💎 Oportunidades & Riscos", "📊 Dashboard", "⚖️ Simulação", "📤 Saídas", "📥 Entradas"]
     tem_cruzamento = (not df_xml_v.empty or not df_xml_c.empty) and (not df_sped_v.empty or not df_sped_c.empty)
     if tem_cruzamento: abas.insert(0, "⚔️ Cruzamento XML x SPED")
         
     tabs = st.tabs(abas)
-
-    # --- ABA CRUZAMENTO ---
+    
+    # --- ABA 0: CRUZAMENTO (Se houver) ---
     if tem_cruzamento:
         with tabs[0]:
-            st.markdown("### ⚔️ Auditoria Cruzada: XML vs SPED Fiscal")
-            
-            # Cruzamento
-            xml_v_group = df_xml_v.groupby('Chave NFe')['Valor'].sum().reset_index().rename(columns={'Valor': 'Valor_XML'}) if not df_xml_v.empty else pd.DataFrame(columns=['Chave NFe', 'Valor_XML'])
-            sped_v_group = df_sped_v.groupby('Chave NFe')['Valor'].sum().reset_index().rename(columns={'Valor': 'Valor_SPED'}) if not df_sped_v.empty else pd.DataFrame(columns=['Chave NFe', 'Valor_SPED'])
+            st.markdown("### ⚔️ Auditoria Cruzada")
+            xml_v_group = df_xml_v.groupby('Chave NFe')['Valor'].sum().reset_index().rename(columns={'Valor': 'Valor_XML'}) if not df_xml_v.empty else pd.DataFrame()
+            sped_v_group = df_sped_v.groupby('Chave NFe')['Valor'].sum().reset_index().rename(columns={'Valor': 'Valor_SPED'}) if not df_sped_v.empty else pd.DataFrame()
             
             cruzamento = pd.merge(xml_v_group, sped_v_group, on='Chave NFe', how='outer', indicator=True)
-            
             so_xml = cruzamento[cruzamento['_merge'] == 'left_only']
-            so_sped = cruzamento[cruzamento['_merge'] == 'right_only']
-            ambos = cruzamento[cruzamento['_merge'] == 'both'].copy()
+            divergentes = cruzamento[(cruzamento['_merge'] == 'both') & (abs(cruzamento['Valor_XML'] - cruzamento['Valor_SPED']) > 0.01)]
             
-            ambos['Diferenca'] = ambos['Valor_XML'] - ambos['Valor_SPED']
-            divergentes = ambos[abs(ambos['Diferenca']) > 0.01]
+            k1, k2 = st.columns(2)
+            k1.metric("Omissão no SPED", len(so_xml), delta="Risco Alto", delta_color="inverse")
+            k2.metric("Divergência de Valor", len(divergentes), delta="Erro Valor", delta_color="inverse")
             
-            k1, k2, k3 = st.columns(3)
-            k1.metric("Omissão no SPED (Só XML)", len(so_xml), delta="Risco Alto", delta_color="inverse")
-            k2.metric("Sem XML (Só SPED)", len(so_sped), delta="Atenção", delta_color="inverse")
-            k3.metric("Divergência de Valor", len(divergentes), delta="Erro Valor", delta_color="inverse")
+            if not so_xml.empty: st.error("🚨 Notas não escrituradas no SPED:"); st.dataframe(so_xml)
+            if not divergentes.empty: st.warning("⚠️ Notas com valor diferente:"); st.dataframe(divergentes)
+            if so_xml.empty and divergentes.empty: st.success("✅ Cruzamento XML x SPED 100% Ok!")
+
+    # --- ABA 1: OPORTUNIDADES E RISCOS (A NOVIDADE!) ---
+    # Índice dinâmico para saber onde jogar o conteúdo
+    idx_oport = 1 if tem_cruzamento else 0
+    idx_dash = 2 if tem_cruzamento else 1
+    idx_sim = 3 if tem_cruzamento else 2
+    idx_sai = 4 if tem_cruzamento else 3
+    idx_ent = 5 if tem_cruzamento else 4
+
+    with tabs[idx_oport]:
+        st.markdown("### 💎 Análise de Inteligência Fiscal")
+        st.caption("Identificação automática de pagamentos indevidos (oportunidades) e passivos ocultos (riscos).")
+        
+        if not df_final_v.empty:
+            # Lógica: Se Carga Atual > Carga Projetada (e Projetada for baixa/zero), pode ser oportunidade
+            # Vamos focar em: Produto que a regra diz ser Zero/Reduzido mas pagou Cheio
+            
+            # Filtro 1: Oportunidades (Pagou muito, devia pagar pouco)
+            # Simplificação: Consideramos oportunidade se Carga Atual > 0 e a Regra do Motor diz que é Zero/Reduzido
+            oportunidades = df_final_v[
+                (df_final_v['Carga Atual'] > 0) & 
+                (df_final_v['Status'].str.contains("ZERO") | df_final_v['Status'].str.contains("REDUZIDA"))
+            ].copy()
+            
+            oportunidades['Potencial Recuperação'] = oportunidades['Carga Atual'] - oportunidades['Carga Projetada']
+            total_recup = oportunidades['Potencial Recuperação'].sum()
+            
+            # Filtro 2: Riscos (Pagou Zero, devia pagar Cheio)
+            riscos = df_final_v[
+                (df_final_v['Carga Atual'] == 0) & 
+                (df_final_v['Status'] == "PADRAO")
+            ].copy()
+            total_risco = riscos['Carga Projetada'].sum() # Estimativa do que deveria ter pago
+            
+            # KPIs
+            c1, c2 = st.columns(2)
+            c1.metric("💰 Potencial de Recuperação", f"R$ {total_recup:,.2f}", delta="Crédito Possível", delta_color="normal")
+            c2.metric("⚠️ Risco Fiscal Detectado", f"R$ {total_risco:,.2f}", delta="Passivo Oculto", delta_color="inverse")
             
             st.divider()
             
-            if not so_xml.empty:
-                st.error(f"🚨 **{len(so_xml)} Notas Omitidas no SPED**")
-                st.dataframe(so_xml[['Chave NFe', 'Valor_XML']], use_container_width=True, column_config={"Valor_XML": st.column_config.NumberColumn(format="R$ %.2f")})
-            
-            if not divergentes.empty:
-                st.warning(f"⚠️ **{len(divergentes)} Notas com Valores Divergentes**")
-                st.dataframe(divergentes[['Chave NFe', 'Valor_XML', 'Valor_SPED', 'Diferenca']], use_container_width=True, column_config={"Valor_XML": st.column_config.NumberColumn(format="R$ %.2f"), "Valor_SPED": st.column_config.NumberColumn(format="R$ %.2f"), "Diferenca": st.column_config.NumberColumn(format="R$ %.2f")})
+            if not oportunidades.empty:
+                st.success(f"**Encontramos {len(oportunidades)} itens com tributação maior que a necessária:**")
+                st.dataframe(
+                    oportunidades[['Cód. Produto', 'Descrição Produto', 'NCM', 'Carga Atual', 'DescRegra', 'Potencial Recuperação']],
+                    use_container_width=True
+                )
+            else:
+                st.info("Nenhuma oportunidade óbvia de recuperação encontrada (Parabéns, a tributação parece otimizada!)")
                 
-            if so_xml.empty and divergentes.empty:
-                st.success("✅ Cruzamento Perfeito! Nenhuma divergência encontrada nas saídas.")
+            if not riscos.empty:
+                st.error(f"**Atenção: {len(riscos)} itens saíram zerados mas não encontramos base legal para isso:**")
+                st.dataframe(riscos[['Cód. Produto', 'Descrição Produto', 'NCM', 'Carga Atual', 'DescRegra']], use_container_width=True)
 
-    idx_dash = 1 if tem_cruzamento else 0
-    idx_sim = 2 if tem_cruzamento else 1
-    idx_sai = 3 if tem_cruzamento else 2
-    idx_ent = 4 if tem_cruzamento else 3
-
-    # --- DASHBOARD ---
+    # --- ABA DASHBOARD ---
     with tabs[idx_dash]:
-        st.markdown("### Visão Geral da Apuração")
-        debito = df_final_v['Carga Projetada'].sum() if not df_final_v.empty else 0
-        credito = df_final_c['Carga Projetada'].sum() if not df_final_c.empty else 0
-        saldo = debito - credito
+        st.markdown("### Visão Geral")
+        deb = df_final_v['Carga Projetada'].sum() if not df_final_v.empty else 0
+        cred = df_final_c['Carga Projetada'].sum() if not df_final_c.empty else 0
+        saldo = deb - cred
         
-        k1, k2, k3, k4 = st.columns(4)
-        k1.metric("Débitos (Saídas)", f"R$ {debito:,.2f}", delta="Passivo", delta_color="off")
-        k2.metric("Créditos (Entradas)", f"R$ {credito:,.2f}", delta="Ativo", delta_color="normal")
-        cor_saldo = "#C0392B" if saldo > 0 else "#27AE60"
-        st.markdown(f"""<style>div[data-testid="metric-container"]:nth-child(3) {{border-left: 5px solid {cor_saldo} !important;}}</style>""", unsafe_allow_html=True)
-        k3.metric("Saldo Estimado", f"R$ {abs(saldo):,.2f}", delta="A Pagar" if saldo > 0 else "Credor", delta_color="inverse")
+        k1, k2, k3 = st.columns(3)
+        k1.metric("Débitos (Saídas)", f"R$ {deb:,.2f}")
+        k2.metric("Créditos (Entradas)", f"R$ {cred:,.2f}")
+        k3.metric("Saldo Estimado", f"R$ {abs(saldo):,.2f}", delta="A Pagar" if saldo>0 else "Credor", delta_color="inverse")
         
-        erros = 0
-        if not df_final_v.empty: erros += len(df_final_v[df_final_v['Validação TIPI'].str.contains("Ausente")])
-        k4.metric("Alertas NCM", erros, delta_color="inverse")
-
         if not df_final_v.empty:
-            st.markdown("#### 🏆 Top 5 Produtos - Maior Carga")
+            st.markdown("#### Top 5 Produtos (Carga Tributária)")
             top = df_final_v.groupby('Produto')['Carga Projetada'].sum().nlargest(5).reset_index().sort_values('Carga Projetada')
             st.bar_chart(top, x="Carga Projetada", y="Produto", color="#E67E22", horizontal=True)
 
-    # --- SIMULAÇÃO ---
+    # --- ABA SIMULAÇÃO ---
     with tabs[idx_sim]:
-        st.markdown("### Comparativo: Regime Atual vs. Reforma")
-        total_atual = df_final_v['Carga Atual'].sum() if not df_final_v.empty else 0
-        total_novo = df_final_v['Carga Projetada'].sum() if not df_final_v.empty else 0
-        delta = total_novo - total_atual
-        pct_delta = ((total_novo - total_atual) / total_atual * 100) if total_atual > 0 else 0
+        st.markdown("### Comparativo: Atual vs Reforma")
+        t_atual = df_final_v['Carga Atual'].sum() if not df_final_v.empty else 0
+        t_novo = df_final_v['Carga Projetada'].sum() if not df_final_v.empty else 0
+        delta = t_novo - t_atual
         
         c1, c2, c3 = st.columns(3)
-        c1.metric("Carga Atual", f"R$ {total_atual:,.2f}")
-        c2.metric("Nova Carga", f"R$ {total_novo:,.2f}")
-        lbl_delta = "Aumento" if delta > 0 else "Economia"
-        c3.metric(lbl_delta, f"R$ {abs(delta):,.2f}", delta=f"{pct_delta:+.2f}%", delta_color="inverse")
+        c1.metric("Carga Atual", f"R$ {t_atual:,.2f}")
+        c2.metric("Nova Carga", f"R$ {t_novo:,.2f}")
+        c3.metric("Variação", f"R$ {abs(delta):,.2f}", delta="Aumento" if delta>0 else "Economia", delta_color="inverse")
         
-        df_chart = pd.DataFrame({'Cenário': ['1. Atual', '2. Reforma'], 'Valor': [total_atual, total_novo]})
-        st.bar_chart(df_chart, x='Cenário', y='Valor', color='Cenário')
+        st.bar_chart(pd.DataFrame({'Cenário': ['Atual', 'Reforma'], 'Valor': [t_atual, t_novo]}), x='Cenário', y='Valor', color='Cenário')
 
     # --- TABELAS ---
-    col_config = {
-        "Valor": st.column_config.ProgressColumn("Valor Base", format="R$ %.2f", min_value=0, max_value=float(df_final_v['Valor'].max()) if not df_final_v.empty else 1000),
-        "vICMS": st.column_config.NumberColumn(format="R$ %.2f"),
-        "vPIS": st.column_config.NumberColumn(format="R$ %.2f"),
-        "vCOFINS": st.column_config.NumberColumn(format="R$ %.2f"),
+    col_cfg = {
+        "Valor": st.column_config.ProgressColumn("Valor Base", format="R$ %.2f", min_value=0, max_value=1000),
         "Carga Atual": st.column_config.NumberColumn(format="R$ %.2f"),
         "Carga Projetada": st.column_config.NumberColumn(format="R$ %.2f"),
-        "vIBS": st.column_config.NumberColumn(format="R$ %.2f"),
-        "vCBS": st.column_config.NumberColumn(format="R$ %.2f"),
-        "Novo CST": st.column_config.TextColumn("Novo CST", width="small"),
-        "Validação TIPI": st.column_config.TextColumn("TIPI", width="medium"),
+        "Novo CST": st.column_config.TextColumn(width="small"),
+        "Validação TIPI": st.column_config.TextColumn(width="medium"),
     }
 
     with tabs[idx_sai]:
-        if not df_final_v.empty: st.dataframe(preparar_exibicao(df_final_v), use_container_width=True, hide_index=True, column_config=col_config)
-        else: st.info("Sem dados de Venda.")
-    
+        if not df_final_v.empty: st.dataframe(preparar_exibicao(df_final_v), use_container_width=True, hide_index=True, column_config=col_cfg)
+        else: st.info("Sem dados.")
     with tabs[idx_ent]:
-        if not df_final_c.empty: st.dataframe(preparar_exibicao(df_final_c), use_container_width=True, hide_index=True, column_config=col_config)
-        else: st.info("Sem dados de Compra.")
+        if not df_final_c.empty: st.dataframe(preparar_exibicao(df_final_c), use_container_width=True, hide_index=True, column_config=col_cfg)
+        else: st.info("Sem dados.")
 
-    # EXPORTAÇÃO
+    # --- EXPORTAR ---
     st.markdown("---")
-    st.markdown("### 📥 Exportar Resultados")
-    c_pdf, c_xls = st.columns(2)
-    with c_pdf:
-        if not df_final_v.empty or not df_final_c.empty:
+    st.markdown("### 📥 Exportar Relatórios")
+    c1, c2 = st.columns(2)
+    with c1:
+        if not df_final_v.empty:
             try:
-                pdf_bytes = relatorio.gerar_pdf_bytes(st.session_state.empresa_nome, df_final_v, df_final_c)
-                st.download_button("📄 BAIXAR LAUDO (PDF)", pdf_bytes, "Laudo_Auditoria.pdf", "application/pdf", use_container_width=True)
+                pdf = relatorio.gerar_pdf_bytes(st.session_state.empresa_nome, df_final_v, df_final_c)
+                st.download_button("📄 BAIXAR LAUDO PDF", pdf, "Laudo.pdf", "application/pdf", use_container_width=True)
             except: st.error("Erro PDF")
-    with c_xls:
-        buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-            if not df_final_v.empty: preparar_exibicao(df_final_v).to_excel(writer, index=False, sheet_name="Auditoria_Vendas")
-            if not df_final_c.empty: preparar_exibicao(df_final_c).to_excel(writer, index=False, sheet_name="Auditoria_Compras")
-            if tem_cruzamento and 'so_xml' in locals() and not so_xml.empty: so_xml.to_excel(writer, index=False, sheet_name="Omissao_SPED")
-            if tem_cruzamento and 'divergentes' in locals() and not divergentes.empty: divergentes.to_excel(writer, index=False, sheet_name="Divergencia_Valor")
-        st.download_button("📊 BAIXAR EXCEL", buffer, "Dados_Auditoria.xlsx", "primary", use_container_width=True)
+    with c2:
+        buf = io.BytesIO()
+        with pd.ExcelWriter(buf, engine='openpyxl') as writer:
+            if not df_final_v.empty: preparar_exibicao(df_final_v).to_excel(writer, sheet_name="Vendas", index=False)
+            if not df_final_c.empty: preparar_exibicao(df_final_c).to_excel(writer, sheet_name="Compras", index=False)
+            if tem_cruzamento:
+                if not so_xml.empty: so_xml.to_excel(writer, sheet_name="Omissao_SPED", index=False)
+                if not divergentes.empty: divergentes.to_excel(writer, sheet_name="Divergencia_Valor", index=False)
+            # Exporta Oportunidades
+            if 'oportunidades' in locals() and not oportunidades.empty: oportunidades.to_excel(writer, sheet_name="Recuperacao_Credito", index=False)
+        st.download_button("📊 BAIXAR EXCEL COMPLETO", buf, "Auditoria.xlsx", "primary", use_container_width=True)
+
 else:
-    st.info("👈 Utilize as caixas acima para carregar os arquivos.")
+    st.info("👈 Utilize o menu lateral para carregar os arquivos.")
