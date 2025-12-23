@@ -91,6 +91,9 @@ with st.sidebar:
     modo_app = st.radio("Modo de Operação", ["📊 Auditoria & Reforma", "⚔️ Comparador SPED vs SPED"], label_visibility="collapsed")
     st.divider()
     
+    # CORREÇÃO AQUI: Inicializa a variável antes dos IFs
+    uploaded_tipi = None 
+    
     if modo_app == "📊 Auditoria & Reforma":
         if st.session_state.empresa_nome != "Nenhuma Empresa":
             st.success(f"🏢 {st.session_state.empresa_nome}")
@@ -112,6 +115,7 @@ with st.sidebar:
         st.rerun()
 
     mapa_lei, df_regras_json = carregar_bases()
+    # Agora uploaded_tipi existe mesmo se for None
     df_tipi = carregar_tipi_cache(uploaded_tipi)
 
 # --- FUNÇÕES ---
@@ -283,8 +287,6 @@ elif modo_app == "⚔️ Comparador SPED vs SPED":
     </div>
     """, unsafe_allow_html=True)
     
-    # --- RESET AUTOMÁTICO DE SEGURANÇA ---
-    # Se não houver arquivo, força DF vazio com colunas
     col1, col2 = st.columns(2)
     
     with col1:
@@ -314,7 +316,6 @@ elif modo_app == "⚔️ Comparador SPED vs SPED":
     df1 = st.session_state.sped1_vendas
     df2 = st.session_state.sped2_vendas
     
-    # PROTEÇÃO: Só tenta desenhar se tiver Chave e Valor
     try:
         if not df1.empty and not df2.empty:
             required = ['Chave NFe', 'Valor']
@@ -348,6 +349,6 @@ elif modo_app == "⚔️ Comparador SPED vs SPED":
                 with t2:
                     st.success(f"{len(iguais)} Notas conferem."); st.dataframe(iguais)
             else:
-                st.warning("⚠️ Arquivos carregados, mas não contêm dados de venda válidos (C100/C190) para comparação.")
+                st.warning("⚠️ Arquivos carregados, mas não contêm dados de venda válidos.")
     except Exception as e:
         st.info("Aguardando arquivos válidos para comparação...")
