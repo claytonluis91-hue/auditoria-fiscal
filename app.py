@@ -52,8 +52,10 @@ st.markdown("""
     .main-header { font-size: 2.2rem; font-weight: 800; color: #FFFFFF; margin: 0; letter-spacing: -1px; }
     .sub-header { font-size: 1rem; color: #FDEBD0; margin-top: 5px; opacity: 0.9; }
     
+    /* Barra de Progresso Laranja */
     .stProgress > div > div > div > div { background-color: #E67E22; }
 
+    /* Métricas */
     div[data-testid="stMetric"] { 
         background-color: #FFFFFF !important; 
         border: 1px solid #E0E0E0; 
@@ -63,11 +65,13 @@ st.markdown("""
         border-top: 4px solid #E67E22; 
     }
     
+    /* Botões */
     div.stButton > button[kind="primary"] { background-color: #E67E22 !important; color: white !important; border: none; font-weight: 600; transition: all 0.3s ease; }
     div.stButton > button[kind="primary"]:hover { transform: translateY(-2px); box-shadow: 0 4px 10px rgba(230, 126, 34, 0.3); }
     
     .streamlit-expanderHeader { font-weight: 600; color: #34495E; background-color: #FFFFFF; border: 1px solid #E0E0E0; border-radius: 5px; }
     
+    /* Box Sucesso */
     .file-success {
         background-color: #D5F5E3; color: #196F3D; padding: 10px; border-radius: 5px;
         border: 1px solid #ABEBC6; margin-top: 5px; margin-bottom: 10px; font-weight: 600; text-align: center;
@@ -204,7 +208,7 @@ if tem_dados:
         
     tabs = st.tabs(abas)
     
-    # --- ABA 0: CRUZAMENTO (Se houver) ---
+    # --- ABA 0: CRUZAMENTO ---
     if tem_cruzamento:
         with tabs[0]:
             st.markdown("### ⚔️ Auditoria Cruzada")
@@ -223,7 +227,7 @@ if tem_dados:
             if not divergentes.empty: st.warning("⚠️ Notas com valor diferente:"); st.dataframe(divergentes)
             if so_xml.empty and divergentes.empty: st.success("✅ Cruzamento XML x SPED 100% Ok!")
 
-    # --- ABA 1: OPORTUNIDADES E RISCOS ---
+    # --- ABA 1: OPORTUNIDADES ---
     idx_oport = 1 if tem_cruzamento else 0
     idx_dash = 2 if tem_cruzamento else 1
     idx_sim = 3 if tem_cruzamento else 2
@@ -279,7 +283,7 @@ if tem_dados:
         if not df_final_v.empty:
             st.markdown("#### Top 5 Produtos (Carga Tributária)")
             top = df_final_v.groupby('Produto')['Carga Projetada'].sum().nlargest(5).reset_index().sort_values('Carga Projetada')
-            # CORREÇÃO: REMOVIDO 'color=' DO GRAFICO TOP 5 PARA EVITAR ERRO
+            # CORREÇÃO: Removido 'color=' para evitar erro
             st.bar_chart(top, x="Carga Projetada", y="Produto", horizontal=True)
 
     # --- ABA SIMULAÇÃO ---
@@ -294,7 +298,8 @@ if tem_dados:
         c2.metric("Nova Carga", f"R$ {t_novo:,.2f}")
         c3.metric("Variação", f"R$ {abs(delta):,.2f}", delta="Aumento" if delta>0 else "Economia", delta_color="inverse")
         
-        st.bar_chart(pd.DataFrame({'Cenário': ['Atual', 'Reforma'], 'Valor': [t_atual, t_novo]}), x='Cenário', y='Valor', color='Cenário')
+        # CORREÇÃO: Removido 'color=' para evitar erro
+        st.bar_chart(pd.DataFrame({'Cenário': ['Atual', 'Reforma'], 'Valor': [t_atual, t_novo]}), x='Cenário', y='Valor')
 
     # --- TABELAS ---
     col_cfg = {
@@ -327,14 +332,10 @@ if tem_dados:
         with pd.ExcelWriter(buf, engine='openpyxl') as writer:
             if not df_final_v.empty: preparar_exibicao(df_final_v).to_excel(writer, sheet_name="Vendas", index=False)
             if not df_final_c.empty: preparar_exibicao(df_final_c).to_excel(writer, sheet_name="Compras", index=False)
-            
-            # PROTEÇÃO EXTRA PARA EXPORTAR CRUZAMENTO/OPORTUNIDADES
             if tem_cruzamento:
-                if 'so_xml' in locals() and not so_xml.empty: so_xml.to_excel(writer, sheet_name="Omissao_SPED", index=False)
-                if 'divergentes' in locals() and not divergentes.empty: divergentes.to_excel(writer, sheet_name="Divergencia_Valor", index=False)
-            
+                if not so_xml.empty: so_xml.to_excel(writer, sheet_name="Omissao_SPED", index=False)
+                if not divergentes.empty: divergentes.to_excel(writer, sheet_name="Divergencia_Valor", index=False)
             if 'oportunidades' in locals() and not oportunidades.empty: oportunidades.to_excel(writer, sheet_name="Recuperacao_Credito", index=False)
-            
         st.download_button("📊 BAIXAR EXCEL COMPLETO", buf, "Auditoria.xlsx", "primary", use_container_width=True)
 
 else:
