@@ -18,31 +18,32 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- ESTADO (SESSION STATE) ---
-# Inicializa variáveis com segurança
-def init_state(key, default):
+# --- ESTADO (SESSION STATE BLINDADO) ---
+def init_df(key, columns=None):
     if key not in st.session_state:
-        st.session_state[key] = default
+        if columns:
+            st.session_state[key] = pd.DataFrame(columns=columns)
+        else:
+            st.session_state[key] = pd.DataFrame()
 
-init_state('xml_vendas_df', pd.DataFrame())
-init_state('xml_compras_df', pd.DataFrame())
-init_state('sped_vendas_df', pd.DataFrame())
-init_state('sped_compras_df', pd.DataFrame())
-init_state('sped1_vendas', pd.DataFrame())
-init_state('sped1_compras', pd.DataFrame())
-init_state('sped2_vendas', pd.DataFrame())
-init_state('sped2_compras', pd.DataFrame())
-init_state('empresa_nome', "Nenhuma Empresa")
-init_state('uploader_key', 0)
+# Inicializa DataFrames com colunas essenciais para evitar KeyError
+cols_padrao = ['Chave NFe', 'Valor', 'Produto', 'NCM']
+init_df('xml_vendas_df', cols_padrao)
+init_df('xml_compras_df', cols_padrao)
+init_df('sped_vendas_df', cols_padrao)
+init_df('sped_compras_df', cols_padrao)
+init_df('sped1_vendas', cols_padrao)
+init_df('sped1_compras', cols_padrao)
+init_df('sped2_vendas', cols_padrao)
+init_df('sped2_compras', cols_padrao)
+
+if 'empresa_nome' not in st.session_state: st.session_state.empresa_nome = "Nenhuma Empresa"
+if 'uploader_key' not in st.session_state: st.session_state.uploader_key = 0
 
 def reset_all():
-    # Reseta forçado
-    st.session_state.xml_vendas_df = pd.DataFrame()
-    st.session_state.xml_compras_df = pd.DataFrame()
-    st.session_state.sped_vendas_df = pd.DataFrame()
-    st.session_state.sped_compras_df = pd.DataFrame()
-    st.session_state.sped1_vendas = pd.DataFrame()
-    st.session_state.sped2_vendas = pd.DataFrame()
+    for key in list(st.session_state.keys()):
+        if 'df' in key or 'sped' in key:
+            st.session_state[key] = pd.DataFrame(columns=cols_padrao)
     st.session_state.empresa_nome = "Nenhuma Empresa"
     st.session_state.uploader_key += 1
 
@@ -62,19 +63,15 @@ st.markdown("""
     .main-header { font-size: 2.2rem; font-weight: 800; color: #FFFFFF; margin: 0; letter-spacing: -1px; }
     .sub-header { font-size: 1rem; color: #FDEBD0; margin-top: 5px; opacity: 0.9; }
     
-    .stProgress > div > div > div > div { background-color: #E67E22; }
-
     div[data-testid="stMetric"] { 
         background-color: #FFFFFF !important; border: 1px solid #E0E0E0; 
         border-radius: 10px; padding: 15px; box-shadow: 0 2px 5px rgba(0,0,0,0.05);
         border-top: 4px solid #E67E22; 
     }
-    
     .file-success {
         background-color: #D5F5E3; color: #196F3D; padding: 10px; border-radius: 5px;
         border: 1px solid #ABEBC6; margin-top: 5px; margin-bottom: 10px; font-weight: 600; text-align: center;
     }
-    
     .correction-box {
         background-color: #FEF9E7; border: 1px solid #F39C12; padding: 20px; border-radius: 10px; margin-top: 20px;
     }
@@ -90,20 +87,16 @@ def carregar_tipi_cache(file): return motor.carregar_tipi(file)
 # --- SIDEBAR ---
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/3029/3029337.png", width=50)
-    
     st.markdown("### Selecione o Modo:")
     modo_app = st.radio("Modo de Operação", ["📊 Auditoria & Reforma", "⚔️ Comparador SPED vs SPED"], label_visibility="collapsed")
-    
     st.divider()
     
     if modo_app == "📊 Auditoria & Reforma":
         if st.session_state.empresa_nome != "Nenhuma Empresa":
             st.success(f"🏢 {st.session_state.empresa_nome}")
-        
         c1, c2 = st.columns(2)
         with c1: aliq_ibs = st.number_input("IBS (%)", 0.0, 50.0, 17.7, 0.1)
         with c2: aliq_cbs = st.number_input("CBS (%)", 0.0, 50.0, 8.8, 0.1)
-        
         with st.expander("📂 Atualizar TIPI"):
             uploaded_tipi = st.file_uploader("TIPI", type=['xlsx', 'csv'])
             if st.button("🔄 Recarregar"):
@@ -195,8 +188,8 @@ if modo_app == "📊 Auditoria & Reforma":
                 with st.spinner("Processando SPED..."):
                     nome, vendas, compras = motor.processar_sped_fiscal(sped_file)
                     st.session_state.empresa_nome = nome
-                    st.session_state.sped_vendas_df = pd.DataFrame(vendas)
-                    st.session_state.sped_compras_df = pd.DataFrame(compras)
+                    st.session_state.sped_vendas_df = pd.DataFrame(vendas) if vendas else pd.DataFrame(columns=cols_padrao)
+                    st.session_state.sped_compras_df = pd.DataFrame(compras) if compras else pd.DataFrame(columns=cols_padrao)
                     st.rerun()
 
     df_xml_v = auditar_df(st.session_state.xml_vendas_df.copy())
@@ -219,8 +212,8 @@ if modo_app == "📊 Auditoria & Reforma":
         if tem_cruzamento:
             with tabs[0]:
                 st.markdown("### ⚔️ Auditoria Cruzada")
-                xml_val = df_xml_v.groupby('Chave NFe')['Valor'].sum().reset_index().rename(columns={'Valor':'V_XML'}) if not df_xml_v.empty else pd.DataFrame()
-                sped_val = df_sped_v.groupby('Chave NFe')['Valor'].sum().reset_index().rename(columns={'Valor':'V_SPED'}) if not df_sped_v.empty else pd.DataFrame()
+                xml_val = df_xml_v.groupby('Chave NFe')['Valor'].sum().reset_index().rename(columns={'Valor':'V_XML'}) if not df_xml_v.empty else pd.DataFrame(columns=['Chave NFe', 'V_XML'])
+                sped_val = df_sped_v.groupby('Chave NFe')['Valor'].sum().reset_index().rename(columns={'Valor':'V_SPED'}) if not df_sped_v.empty else pd.DataFrame(columns=['Chave NFe', 'V_SPED'])
                 
                 cross = pd.merge(xml_val, sped_val, on='Chave NFe', how='outer', indicator=True)
                 so_xml = cross[cross['_merge']=='left_only']
@@ -280,7 +273,7 @@ if modo_app == "📊 Auditoria & Reforma":
 
 
 # ==============================================================================
-# MODO 2: COMPARADOR SPED VS SPED
+# MODO 2: COMPARADOR SPED VS SPED (BLINDADO)
 # ==============================================================================
 elif modo_app == "⚔️ Comparador SPED vs SPED":
     st.markdown("""
@@ -290,70 +283,71 @@ elif modo_app == "⚔️ Comparador SPED vs SPED":
     </div>
     """, unsafe_allow_html=True)
     
+    # --- RESET AUTOMÁTICO DE SEGURANÇA ---
+    # Se não houver arquivo, força DF vazio com colunas
     col1, col2 = st.columns(2)
-    
-    # --- LIMPEZA AUTOMÁTICA DE MEMÓRIA SUJA ---
-    # Se o uploader estiver vazio, garante que o dataframe esteja vazio
     
     with col1:
         st.markdown("### 📁 1. SPED Original")
         file1 = st.file_uploader("Upload SPED Cliente", type=['txt'], key="sped1")
-        if not file1: 
-            st.session_state.sped1_vendas = pd.DataFrame()
+        if not file1:
+            st.session_state.sped1_vendas = pd.DataFrame(columns=cols_padrao)
         elif file1 and st.session_state.sped1_vendas.empty:
             with st.spinner("Lendo Arquivo A..."):
                 n1, v1, c1 = motor.processar_sped_fiscal(file1)
-                st.session_state.sped1_vendas = pd.DataFrame(v1)
-                st.session_state.sped1_compras = pd.DataFrame(c1)
+                st.session_state.sped1_vendas = pd.DataFrame(v1) if v1 else pd.DataFrame(columns=cols_padrao)
+                st.success(f"Arquivo A: {len(v1)} Vendas")
                 st.rerun()
                 
     with col2:
         st.markdown("### 💻 2. SPED Gerado")
         file2 = st.file_uploader("Upload SPED ERP", type=['txt'], key="sped2")
         if not file2:
-            st.session_state.sped2_vendas = pd.DataFrame()
+            st.session_state.sped2_vendas = pd.DataFrame(columns=cols_padrao)
         elif file2 and st.session_state.sped2_vendas.empty:
             with st.spinner("Lendo Arquivo B..."):
                 n2, v2, c2 = motor.processar_sped_fiscal(file2)
-                st.session_state.sped2_vendas = pd.DataFrame(v2)
-                st.session_state.sped2_compras = pd.DataFrame(c2)
+                st.session_state.sped2_vendas = pd.DataFrame(v2) if v2 else pd.DataFrame(columns=cols_padrao)
+                st.success(f"Arquivo B: {len(v2)} Vendas")
                 st.rerun()
 
     df1 = st.session_state.sped1_vendas
     df2 = st.session_state.sped2_vendas
     
-    # --- BLINDAGEM CONTRA ARQUIVO VAZIO ---
-    if not df1.empty and not df2.empty:
-        required = ['Chave NFe', 'Valor']
-        # Verifica se as colunas existem antes de tentar calcular
-        if all(col in df1.columns for col in required) and all(col in df2.columns for col in required):
-            st.divider()
-            st.markdown("### 📊 Resultado da Comparação (Vendas/Saídas)")
-            
-            g1 = df1.groupby('Chave NFe')['Valor'].sum().reset_index().rename(columns={'Valor': 'Valor_A'})
-            g2 = df2.groupby('Chave NFe')['Valor'].sum().reset_index().rename(columns={'Valor': 'Valor_B'})
-            
-            comp = pd.merge(g1, g2, on='Chave NFe', how='outer', indicator=True)
-            comp['Diferença'] = comp['Valor_A'].fillna(0) - comp['Valor_B'].fillna(0)
-            
-            so_no_cliente = comp[comp['_merge'] == 'left_only']
-            so_no_erp = comp[comp['_merge'] == 'right_only']
-            divergentes = comp[(comp['_merge'] == 'both') & (abs(comp['Diferença']) > 0.01)]
-            iguais = comp[(comp['_merge'] == 'both') & (abs(comp['Diferença']) <= 0.01)]
-            
-            k1, k2, k3, k4 = st.columns(4)
-            k1.metric("Total Cliente", len(g1))
-            k2.metric("Total ERP", len(g2))
-            k3.metric("Faltantes", len(so_no_cliente), delta_color="inverse")
-            k4.metric("Div. Valor", len(divergentes), delta_color="inverse")
-            
-            t1, t2 = st.tabs(["⚠️ Divergências", "✅ Iguais"])
-            with t1:
-                if not so_no_cliente.empty: st.error("🚨 Notas SUMIRAM no ERP:"); st.dataframe(so_no_cliente)
-                if not so_no_erp.empty: st.warning("⚠️ Notas EXTRAS no ERP:"); st.dataframe(so_no_erp)
-                if not divergentes.empty: st.warning("💰 Valores Alterados:"); st.dataframe(divergentes)
-                if so_no_cliente.empty and so_no_erp.empty and divergentes.empty: st.success("Perfeito!")
-            with t2:
-                st.success(f"{len(iguais)} Notas conferem."); st.dataframe(iguais)
-        else:
-            st.warning("⚠️ Um dos arquivos não possui registros de venda válidos (C100/C190).")
+    # PROTEÇÃO: Só tenta desenhar se tiver Chave e Valor
+    try:
+        if not df1.empty and not df2.empty:
+            required = ['Chave NFe', 'Valor']
+            if all(col in df1.columns for col in required) and all(col in df2.columns for col in required):
+                st.divider()
+                st.markdown("### 📊 Resultado da Comparação")
+                
+                g1 = df1.groupby('Chave NFe')['Valor'].sum().reset_index().rename(columns={'Valor': 'Valor_A'})
+                g2 = df2.groupby('Chave NFe')['Valor'].sum().reset_index().rename(columns={'Valor': 'Valor_B'})
+                
+                comp = pd.merge(g1, g2, on='Chave NFe', how='outer', indicator=True)
+                comp['Diferença'] = comp['Valor_A'].fillna(0) - comp['Valor_B'].fillna(0)
+                
+                so_no_cliente = comp[comp['_merge'] == 'left_only']
+                so_no_erp = comp[comp['_merge'] == 'right_only']
+                divergentes = comp[(comp['_merge'] == 'both') & (abs(comp['Diferença']) > 0.01)]
+                iguais = comp[(comp['_merge'] == 'both') & (abs(comp['Diferença']) <= 0.01)]
+                
+                k1, k2, k3, k4 = st.columns(4)
+                k1.metric("Total Cliente", len(g1))
+                k2.metric("Total ERP", len(g2))
+                k3.metric("Faltantes", len(so_no_cliente), delta_color="inverse")
+                k4.metric("Div. Valor", len(divergentes), delta_color="inverse")
+                
+                t1, t2 = st.tabs(["⚠️ Divergências", "✅ Iguais"])
+                with t1:
+                    if not so_no_cliente.empty: st.error("🚨 Notas SUMIRAM no ERP:"); st.dataframe(so_no_cliente)
+                    if not so_no_erp.empty: st.warning("⚠️ Notas EXTRAS no ERP:"); st.dataframe(so_no_erp)
+                    if not divergentes.empty: st.warning("💰 Valores Alterados:"); st.dataframe(divergentes)
+                    if so_no_cliente.empty and so_no_erp.empty and divergentes.empty: st.success("Perfeito!")
+                with t2:
+                    st.success(f"{len(iguais)} Notas conferem."); st.dataframe(iguais)
+            else:
+                st.warning("⚠️ Arquivos carregados, mas não contêm dados de venda válidos (C100/C190) para comparação.")
+    except Exception as e:
+        st.info("Aguardando arquivos válidos para comparação...")
