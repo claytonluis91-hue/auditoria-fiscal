@@ -36,7 +36,8 @@ init_df('sped1_vendas', cols_padrao)
 init_df('sped1_compras', cols_padrao)
 init_df('sped2_vendas', cols_padrao)
 init_df('sped2_compras', cols_padrao)
-init_df('df_nbs', None) # Novo DataFrame para a Tabela NBS
+# Inicializa a tabela NBS como None para saber se foi carregada
+if 'df_nbs' not in st.session_state: st.session_state.df_nbs = None
 
 if 'empresa_nome' not in st.session_state: st.session_state.empresa_nome = "Nenhuma Empresa"
 if 'uploader_key' not in st.session_state: st.session_state.uploader_key = 0
@@ -44,7 +45,7 @@ if 'uploader_key' not in st.session_state: st.session_state.uploader_key = 0
 def reset_all():
     for key in list(st.session_state.keys()):
         if 'df' in key or 'sped' in key:
-            # Mantem a NBS carregada para não precisar subir toda hora
+            # PRESERVA A TABELA NBS (Não apaga se limpar a auditoria)
             if key != 'df_nbs': 
                 st.session_state[key] = pd.DataFrame(columns=cols_padrao)
     st.session_state.empresa_nome = "Nenhuma Empresa"
@@ -88,7 +89,6 @@ def carregar_tipi_cache(file): return motor.carregar_tipi(file)
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/2910/2910768.png", width=70)
     
-    # --- SELETOR DE MODOS (AGORA SÃO 3) ---
     st.markdown("### Selecione o Modo:")
     modo_app = st.radio(
         "Modo de Operação", 
@@ -112,7 +112,7 @@ with st.sidebar:
                 st.rerun()
     
     elif modo_app == "🔍 Consulta NBS/cClass":
-        st.info("ℹ️ Base da Receita Federal.")
+        st.info("ℹ️ Base oficial da Receita Federal (XLSX).")
 
     st.markdown("<br>", unsafe_allow_html=True)
     if st.button("🗑️ LIMPAR TUDO", type="secondary"):
@@ -214,7 +214,6 @@ if modo_app == "📊 Auditoria & Reforma":
     if tem_dados:
         st.markdown("---")
         abas = ["📤 Saídas", "📥 Entradas", "⚖️ Simulação", "📊 Dashboard"]
-        
         tem_cruzamento = (not df_xml_v.empty or not df_xml_c.empty) and (not df_sped_v.empty or not df_sped_c.empty)
         if tem_cruzamento: abas.insert(0, "⚔️ Cruzamento XML x SPED")
             
@@ -359,7 +358,7 @@ elif modo_app == "⚔️ Comparador SPED vs SPED":
         st.info("Aguardando arquivos válidos para comparação...")
 
 # ==============================================================================
-# MODO 3: CONSULTA NBS/cClass (O NOVO MODO)
+# MODO 3: CONSULTA NBS/cClass (NOVO COM XLSX)
 # ==============================================================================
 elif modo_app == "🔍 Consulta NBS/cClass":
     st.markdown("""
@@ -369,32 +368,29 @@ elif modo_app == "🔍 Consulta NBS/cClass":
     </div>
     """, unsafe_allow_html=True)
     
-    st.info("💡 Utilize o arquivo **'tabela geral.csv'** ou similar fornecido pela Receita Federal.")
+    st.info("💡 Carregue a Tabela da Receita Federal em **Excel (.xlsx)**.")
     
-    uploaded_nbs = st.file_uploader("Carregar Tabela NBS (CSV)", type=['csv'])
+    # Upload EXCEL
+    uploaded_nbs = st.file_uploader("Carregar Tabela NBS (XLSX)", type=['xlsx'])
     
     if uploaded_nbs:
-        try:
-            # Tenta carregar com encoding 'latin1' (comum no governo) e separador ';'
-            if st.session_state.df_nbs is None or st.session_state.df_nbs.empty:
-                # DICA: Use sep=';' ou sep=',' dependendo do seu arquivo. Vou tentar detectar.
-                try:
-                    df = pd.read_csv(uploaded_nbs, sep=';', encoding='latin1', dtype=str)
-                except:
-                    uploaded_nbs.seek(0)
-                    df = pd.read_csv(uploaded_nbs, sep=',', encoding='utf-8', dtype=str)
-                
-                st.session_state.df_nbs = df
-        except Exception as e:
-            st.error(f"Erro ao ler CSV: {e}")
+        if st.session_state.df_nbs is None:
+            try:
+                with st.spinner("Processando planilha (isso pode demorar um pouco)..."):
+                    # Lê como string para preservar zeros à esquerda
+                    df = pd.read_excel(uploaded_nbs, dtype=str)
+                    st.session_state.df_nbs = df
+            except Exception as e:
+                st.error(f"Erro ao ler o Excel: {e}")
 
     # SE TIVER DADOS, MOSTRA A BUSCA
     if st.session_state.df_nbs is not None and not st.session_state.df_nbs.empty:
+        st.success("✅ Tabela Carregada com Sucesso!")
         st.markdown("---")
         termo = st.text_input("🔍 **Digite para pesquisar (Código, Descrição, Palavra-chave):**", placeholder="Ex: Limpeza, Vigilância, 1.01...")
         
         if termo:
-            # BUSCA UNIVERSAL: Converte tudo pra texto e busca em qualquer coluna
+            # BUSCA UNIVERSAL
             mask = st.session_state.df_nbs.apply(lambda x: x.astype(str).str.contains(termo, case=False, na=False)).any(axis=1)
             resultado = st.session_state.df_nbs[mask]
             
@@ -402,5 +398,5 @@ elif modo_app == "🔍 Consulta NBS/cClass":
             st.dataframe(resultado, use_container_width=True)
         else:
             st.markdown("👆 *Digite algo acima para filtrar a tabela.*")
-            with st.expander("Ver Tabela Completa"):
-                st.dataframe(st.session_state.df_nbs, use_container_width=True)
+            with st.expander("Ver Tabela Completa (Amostra)"):
+                st.dataframe(st.session_state.df_nbs.head(100), use_container_width=True)
