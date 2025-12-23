@@ -25,7 +25,7 @@ if 'xml_compras_df' not in st.session_state: st.session_state.xml_compras_df = p
 if 'sped_vendas_df' not in st.session_state: st.session_state.sped_vendas_df = pd.DataFrame()
 if 'sped_compras_df' not in st.session_state: st.session_state.sped_compras_df = pd.DataFrame()
 
-# Modo Comparador (Novo)
+# Modo Comparador
 if 'sped1_vendas' not in st.session_state: st.session_state.sped1_vendas = pd.DataFrame()
 if 'sped1_compras' not in st.session_state: st.session_state.sped1_compras = pd.DataFrame()
 if 'sped2_vendas' not in st.session_state: st.session_state.sped2_vendas = pd.DataFrame()
@@ -76,6 +76,11 @@ st.markdown("""
         background-color: #D5F5E3; color: #196F3D; padding: 10px; border-radius: 5px;
         border: 1px solid #ABEBC6; margin-top: 5px; margin-bottom: 10px; font-weight: 600; text-align: center;
     }
+    
+    /* Botão de Correção */
+    .correction-box {
+        background-color: #FEF9E7; border: 1px solid #F39C12; padding: 20px; border-radius: 10px; margin-top: 20px;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -123,6 +128,9 @@ with st.sidebar:
 # --- FUNÇÕES AUXILIARES ---
 ns = {'ns': 'http://www.portalfiscal.inf.br/nfe'}
 
+def convert_df_to_csv(df):
+    return df.to_csv(index=False, sep=';', decimal=',', encoding='utf-8-sig').encode('utf-8-sig')
+
 def processar_arquivos_com_barra(arquivos, tipo):
     lista = []
     total = len(arquivos)
@@ -154,7 +162,7 @@ def preparar_exibicao(df):
     return df[cols_existentes]
 
 # ==============================================================================
-# MODO 1: AUDITORIA & REFORMA (O CLÁSSICO)
+# MODO 1: AUDITORIA & REFORMA
 # ==============================================================================
 if modo_app == "📊 Auditoria & Reforma":
     st.markdown("""
@@ -216,7 +224,6 @@ if modo_app == "📊 Auditoria & Reforma":
         if tem_cruzamento:
             with tabs[0]:
                 st.markdown("### ⚔️ Auditoria Cruzada")
-                # Lógica de cruzamento simplificada
                 xml_val = df_xml_v.groupby('Chave NFe')['Valor'].sum().reset_index().rename(columns={'Valor':'V_XML'}) if not df_xml_v.empty else pd.DataFrame()
                 sped_val = df_sped_v.groupby('Chave NFe')['Valor'].sum().reset_index().rename(columns={'Valor':'V_SPED'}) if not df_sped_v.empty else pd.DataFrame()
                 
@@ -231,22 +238,31 @@ if modo_app == "📊 Auditoria & Reforma":
                 if not so_xml.empty: st.error("🚨 Notas fora do SPED:"); st.dataframe(so_xml)
                 if not div.empty: st.warning("⚠️ Valores Divergentes:"); st.dataframe(div)
 
-        # Aba Oportunidades
         idx = 1 if tem_cruzamento else 0
         with tabs[idx]:
             st.markdown("### 💎 Análise de Inteligência Fiscal")
             if not df_final_v.empty:
-                op = df_final_v[(df_final_v['Carga Atual']>0) & (df_final_v['Status'].str.contains("ZERO") | df_final_v['Status'].str.contains("REDUZIDA"))]
+                op = df_final_v[(df_final_v['Carga Atual']>0) & (df_final_v['Status'].str.contains("ZERO") | df_final_v['Status'].str.contains("REDUZIDA"))].copy()
                 ri = df_final_v[(df_final_v['Carga Atual']==0) & (df_final_v['Status']=="PADRAO")]
                 
                 c1, c2 = st.columns(2)
                 c1.metric("💰 Recuperável", f"R$ {op['Carga Atual'].sum():,.2f}")
                 c2.metric("⚠️ Risco", f"R$ {ri['Carga Projetada'].sum():,.2f}")
                 
-                if not op.empty: st.success("Itens pagando a mais:"); st.dataframe(op[['Produto', 'NCM', 'Carga Atual', 'DescRegra']])
+                if not op.empty:
+                    st.success("Itens pagando a mais:")
+                    st.dataframe(op[['Produto', 'NCM', 'Carga Atual', 'DescRegra']])
+                    
+                    st.markdown('<div class="correction-box">', unsafe_allow_html=True)
+                    st.markdown("#### 🛠️ Kit de Correção")
+                    df_correcao = op[['Cód. Produto', 'Produto', 'NCM', 'DescRegra']].copy()
+                    df_correcao.columns = ['COD', 'DESCRICAO', 'NCM_ATUAL', 'REGRA_SUGERIDA']
+                    csv = convert_df_to_csv(df_correcao)
+                    st.download_button("📥 BAIXAR CORREÇÃO (.CSV)", csv, "Correcao.csv", "text/csv")
+                    st.markdown('</div>', unsafe_allow_html=True)
+
                 if not ri.empty: st.error("Itens pagando a menos:"); st.dataframe(ri[['Produto', 'NCM', 'DescRegra']])
 
-        # Aba Dashboard (Simples)
         idx += 1
         with tabs[idx]:
             st.markdown("### Visão Geral")
@@ -254,24 +270,24 @@ if modo_app == "📊 Auditoria & Reforma":
             k1, k2, k3 = st.columns(3)
             k1.metric("Débitos", f"R$ {d:,.2f}"); k2.metric("Créditos", f"R$ {c:,.2f}"); k3.metric("Saldo", f"R$ {d-c:,.2f}")
             try:
-                top = df_final_v.groupby('Produto')['Carga Projetada'].sum().nlargest(5)
-                st.bar_chart(top)
+                top = df_final_v.groupby('Produto')['Carga Projetada'].sum().nlargest(5).reset_index()
+                st.bar_chart(top.set_index('Produto')['Carga Projetada'])
             except: pass
 
-        # Aba Simulação
         idx += 1
         with tabs[idx]:
             st.markdown("### Comparativo")
             atu = df_final_v['Carga Atual'].sum(); nov = df_final_v['Carga Projetada'].sum()
-            st.bar_chart(pd.DataFrame({'Cenário':['Atual','Novo'], 'Valor':[atu,nov]}).set_index('Cenário'))
+            try:
+                st.bar_chart(pd.DataFrame({'Cenário':['Atual','Novo'], 'Valor':[float(atu),float(nov)]}).set_index('Cenário')['Valor'])
+            except: pass
 
-        # Abas Tabelas
         with tabs[idx+1]: st.dataframe(preparar_exibicao(df_final_v))
         with tabs[idx+2]: st.dataframe(preparar_exibicao(df_final_c))
 
 
 # ==============================================================================
-# MODO 2: COMPARADOR SPED VS SPED (A NOVIDADE!)
+# MODO 2: COMPARADOR SPED VS SPED (CORRIGIDO E BLINDADO)
 # ==============================================================================
 elif modo_app == "⚔️ Comparador SPED vs SPED":
     st.markdown("""
@@ -284,74 +300,66 @@ elif modo_app == "⚔️ Comparador SPED vs SPED":
     col1, col2 = st.columns(2)
     
     with col1:
-        st.markdown("### 📁 1. SPED Original (Cliente)")
+        st.markdown("### 📁 1. SPED Original")
         file1 = st.file_uploader("Upload SPED Cliente", type=['txt'], key="sped1")
         if file1 and st.session_state.sped1_vendas.empty:
             with st.spinner("Lendo Arquivo A..."):
                 n1, v1, c1 = motor.processar_sped_fiscal(file1)
                 st.session_state.sped1_vendas = pd.DataFrame(v1)
                 st.session_state.sped1_compras = pd.DataFrame(c1)
-                st.success(f"Arquivo A: {len(v1)} Vendas | {len(c1)} Compras")
+                st.success(f"Arquivo A: {len(v1)} Vendas")
                 st.rerun()
                 
     with col2:
-        st.markdown("### 💻 2. SPED Gerado (Seu ERP)")
+        st.markdown("### 💻 2. SPED Gerado")
         file2 = st.file_uploader("Upload SPED ERP", type=['txt'], key="sped2")
         if file2 and st.session_state.sped2_vendas.empty:
             with st.spinner("Lendo Arquivo B..."):
                 n2, v2, c2 = motor.processar_sped_fiscal(file2)
                 st.session_state.sped2_vendas = pd.DataFrame(v2)
                 st.session_state.sped2_compras = pd.DataFrame(c2)
-                st.success(f"Arquivo B: {len(v2)} Vendas | {len(c2)} Compras")
+                st.success(f"Arquivo B: {len(v2)} Vendas")
                 st.rerun()
 
-    # Logica de Comparação
     df1 = st.session_state.sped1_vendas
     df2 = st.session_state.sped2_vendas
     
     if not df1.empty and not df2.empty:
-        st.divider()
-        st.markdown("### 📊 Resultado da Comparação (Vendas/Saídas)")
-        
-        # Agrupa por Chave para garantir unicidade
-        g1 = df1.groupby('Chave NFe')['Valor'].sum().reset_index().rename(columns={'Valor': 'Valor_A'})
-        g2 = df2.groupby('Chave NFe')['Valor'].sum().reset_index().rename(columns={'Valor': 'Valor_B'})
-        
-        # Merge
-        comp = pd.merge(g1, g2, on='Chave NFe', how='outer', indicator=True)
-        comp['Diferença'] = comp['Valor_A'].fillna(0) - comp['Valor_B'].fillna(0)
-        
-        # Análise
-        so_no_cliente = comp[comp['_merge'] == 'left_only']
-        so_no_erp = comp[comp['_merge'] == 'right_only']
-        divergentes = comp[(comp['_merge'] == 'both') & (abs(comp['Diferença']) > 0.01)]
-        iguais = comp[(comp['_merge'] == 'both') & (abs(comp['Diferença']) <= 0.01)]
-        
-        # KPIs
-        k1, k2, k3, k4 = st.columns(4)
-        k1.metric("Total Notas Cliente", len(g1))
-        k2.metric("Total Notas ERP", len(g2))
-        k3.metric("Notas Faltantes (ERP)", len(so_no_cliente), delta_color="inverse")
-        k4.metric("Divergência de Valor", len(divergentes), delta_color="inverse")
-        
-        t1, t2 = st.tabs(["⚠️ Divergências e Faltas", "✅ Notas Batidas"])
-        
-        with t1:
-            if not so_no_cliente.empty:
-                st.error(f"🚨 **{len(so_no_cliente)} Notas que estão no Cliente e SUMIRAM no ERP:**")
-                st.dataframe(so_no_cliente[['Chave NFe', 'Valor_A']], use_container_width=True)
+        # --- BLINDAGEM DE COLUNAS (CORREÇÃO AQUI) ---
+        cols_req = ['Chave NFe', 'Valor']
+        erro_cols = False
+        if not all(col in df1.columns for col in cols_req):
+            st.error("❌ O Arquivo A (Cliente) não possui registros de venda (C100/C190) válidos para comparação.")
+            erro_cols = True
+        if not all(col in df2.columns for col in cols_req):
+            st.error("❌ O Arquivo B (ERP) não possui registros de venda (C100/C190) válidos para comparação.")
+            erro_cols = True
             
-            if not so_no_erp.empty:
-                st.warning(f"⚠️ **{len(so_no_erp)} Notas que apareceram no ERP (não estavam no original):**")
-                st.dataframe(so_no_erp[['Chave NFe', 'Valor_B']], use_container_width=True)
-                
-            if not divergentes.empty:
-                st.warning(f"💰 **{len(divergentes)} Notas com Valores Alterados:**")
-                st.dataframe(divergentes, use_container_width=True)
-                
-            if so_no_cliente.empty and so_no_erp.empty and divergentes.empty:
-                st.success("✨ **Perfeito!** O arquivo gerado pelo ERP é um espelho fiel do original.")
-                
-        with t2:
-            st.success(f"{len(iguais)} Notas conferem exatamente.")
-            st.dataframe(iguais)
+        if not erro_cols:
+            st.divider()
+            st.markdown("### 📊 Resultado da Comparação (Vendas/Saídas)")
+            
+            g1 = df1.groupby('Chave NFe')['Valor'].sum().reset_index().rename(columns={'Valor': 'Valor_A'})
+            g2 = df2.groupby('Chave NFe')['Valor'].sum().reset_index().rename(columns={'Valor': 'Valor_B'})
+            
+            comp = pd.merge(g1, g2, on='Chave NFe', how='outer', indicator=True)
+            comp['Diferença'] = comp['Valor_A'].fillna(0) - comp['Valor_B'].fillna(0)
+            
+            so_no_cliente = comp[comp['_merge'] == 'left_only']
+            so_no_erp = comp[comp['_merge'] == 'right_only']
+            divergentes = comp[(comp['_merge'] == 'both') & (abs(comp['Diferença']) > 0.01)]
+            iguais = comp[(comp['_merge'] == 'both') & (abs(comp['Diferença']) <= 0.01)]
+            
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("Total Cliente", len(g1))
+            k2.metric("Total ERP", len(g2))
+            k3.metric("Faltantes", len(so_no_cliente), delta_color="inverse")
+            k4.metric("Div. Valor", len(divergentes), delta_color="inverse")
+            
+            t1, t2 = st.tabs(["⚠️ Divergências", "✅ Iguais"])
+            with t1:
+                if not so_no_cliente.empty: st.error("🚨 Notas SUMIRAM no ERP:"); st.dataframe(so_no_cliente)
+                if not so_no_erp.empty: st.warning("⚠️ Notas EXTRAS no ERP:"); st.dataframe(so_no_erp)
+                if not divergentes.empty: st.warning("💰 Valores Alterados:"); st.dataframe(divergentes)
+            with t2:
+                st.success(f"{len(iguais)} Notas conferem."); st.dataframe(iguais)
