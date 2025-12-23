@@ -17,7 +17,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- ESTADO (SESSION STATE) ---
+# --- ESTADO ---
 if 'xml_vendas_df' not in st.session_state: st.session_state.xml_vendas_df = pd.DataFrame()
 if 'xml_compras_df' not in st.session_state: st.session_state.xml_compras_df = pd.DataFrame()
 if 'sped_vendas_df' not in st.session_state: st.session_state.sped_vendas_df = pd.DataFrame()
@@ -52,10 +52,8 @@ st.markdown("""
     .main-header { font-size: 2.2rem; font-weight: 800; color: #FFFFFF; margin: 0; letter-spacing: -1px; }
     .sub-header { font-size: 1rem; color: #FDEBD0; margin-top: 5px; opacity: 0.9; }
     
-    /* Barra de Progresso Laranja */
     .stProgress > div > div > div > div { background-color: #E67E22; }
 
-    /* Métricas */
     div[data-testid="stMetric"] { 
         background-color: #FFFFFF !important; 
         border: 1px solid #E0E0E0; 
@@ -65,13 +63,9 @@ st.markdown("""
         border-top: 4px solid #E67E22; 
     }
     
-    /* Botões */
     div.stButton > button[kind="primary"] { background-color: #E67E22 !important; color: white !important; border: none; font-weight: 600; transition: all 0.3s ease; }
     div.stButton > button[kind="primary"]:hover { transform: translateY(-2px); box-shadow: 0 4px 10px rgba(230, 126, 34, 0.3); }
     
-    .streamlit-expanderHeader { font-weight: 600; color: #34495E; background-color: #FFFFFF; border: 1px solid #E0E0E0; border-radius: 5px; }
-    
-    /* Box Sucesso */
     .file-success {
         background-color: #D5F5E3; color: #196F3D; padding: 10px; border-radius: 5px;
         border: 1px solid #ABEBC6; margin-top: 5px; margin-bottom: 10px; font-weight: 600; text-align: center;
@@ -85,14 +79,12 @@ def carregar_bases(): return motor.carregar_base_legal(), motor.carregar_json_re
 @st.cache_data
 def carregar_tipi_cache(file): return motor.carregar_tipi(file)
 
-# --- SIDEBAR ---
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/3029/3029337.png", width=50)
     if st.session_state.empresa_nome != "Nenhuma Empresa":
         st.markdown(f"### 🏢 {st.session_state.empresa_nome}")
         qtd_xml = len(st.session_state.xml_vendas_df) + len(st.session_state.xml_compras_df)
         qtd_sped = len(st.session_state.sped_vendas_df) + len(st.session_state.sped_compras_df)
-        
         if qtd_xml > 0 and qtd_sped > 0: st.success(f"⚔️ Modo Cruzamento\nXML: {qtd_xml} | SPED: {qtd_sped}")
         elif qtd_xml > 0: st.info(f"📄 XML Carregado\n({qtd_xml} itens)")
         elif qtd_sped > 0: st.warning(f"📝 SPED Carregado\n({qtd_sped} itens)")
@@ -119,7 +111,6 @@ with st.sidebar:
     mapa_lei, df_regras_json = carregar_bases()
     df_tipi = carregar_tipi_cache(uploaded_tipi)
 
-# --- HEADER ---
 st.markdown("""
 <div class="header-container">
     <div class="main-header">cClass Auditor AI </div>
@@ -145,7 +136,6 @@ def processar_arquivos_com_barra(arquivos, tipo):
     barra.empty()
     return lista
 
-# --- UPLOAD ---
 st.markdown("### 📂 Central de Arquivos")
 c_xml, c_sped = st.columns(2)
 
@@ -177,7 +167,6 @@ with c_sped:
                 st.session_state.sped_compras_df = pd.DataFrame(compras)
                 st.rerun()
 
-# --- AUDITORIA ---
 def auditar_df(df):
     if df.empty: return df
     res = df.apply(lambda row: motor.classificar_item(row, mapa_lei, df_regras_json, df_tipi, aliq_ibs/100, aliq_cbs/100), axis=1, result_type='expand')
@@ -208,7 +197,7 @@ if tem_dados:
         
     tabs = st.tabs(abas)
     
-    # --- ABA 0: CRUZAMENTO ---
+    # --- ABA CRUZAMENTO ---
     if tem_cruzamento:
         with tabs[0]:
             st.markdown("### ⚔️ Auditoria Cruzada")
@@ -227,7 +216,7 @@ if tem_dados:
             if not divergentes.empty: st.warning("⚠️ Notas com valor diferente:"); st.dataframe(divergentes)
             if so_xml.empty and divergentes.empty: st.success("✅ Cruzamento XML x SPED 100% Ok!")
 
-    # --- ABA 1: OPORTUNIDADES ---
+    # --- ABA OPORTUNIDADES ---
     idx_oport = 1 if tem_cruzamento else 0
     idx_dash = 2 if tem_cruzamento else 1
     idx_sim = 3 if tem_cruzamento else 2
@@ -236,39 +225,28 @@ if tem_dados:
 
     with tabs[idx_oport]:
         st.markdown("### 💎 Análise de Inteligência Fiscal")
-        st.caption("Identificação automática de pagamentos indevidos (oportunidades) e passivos ocultos (riscos).")
+        st.caption("Pagamentos indevidos (oportunidades) e passivos ocultos (riscos).")
         
         if not df_final_v.empty:
             oportunidades = df_final_v[
                 (df_final_v['Carga Atual'] > 0) & 
                 (df_final_v['Status'].str.contains("ZERO") | df_final_v['Status'].str.contains("REDUZIDA"))
             ].copy()
-            
             oportunidades['Potencial Recuperação'] = oportunidades['Carga Atual'] - oportunidades['Carga Projetada']
             total_recup = oportunidades['Potencial Recuperação'].sum()
             
-            riscos = df_final_v[
-                (df_final_v['Carga Atual'] == 0) & 
-                (df_final_v['Status'] == "PADRAO")
-            ].copy()
+            riscos = df_final_v[(df_final_v['Carga Atual'] == 0) & (df_final_v['Status'] == "PADRAO")].copy()
             total_risco = riscos['Carga Projetada'].sum()
             
             c1, c2 = st.columns(2)
-            c1.metric("💰 Potencial de Recuperação", f"R$ {total_recup:,.2f}", delta="Crédito Possível", delta_color="normal")
-            c2.metric("⚠️ Risco Fiscal Detectado", f"R$ {total_risco:,.2f}", delta="Passivo Oculto", delta_color="inverse")
-            
+            c1.metric("💰 Potencial de Recuperação", f"R$ {total_recup:,.2f}", delta="Crédito", delta_color="normal")
+            c2.metric("⚠️ Risco Fiscal", f"R$ {total_risco:,.2f}", delta="Passivo", delta_color="inverse")
             st.divider()
             
-            if not oportunidades.empty:
-                st.success(f"**Encontramos {len(oportunidades)} itens com tributação maior que a necessária:**")
-                st.dataframe(oportunidades[['Cód. Produto', 'Descrição Produto', 'NCM', 'Carga Atual', 'DescRegra', 'Potencial Recuperação']], use_container_width=True)
-            else: st.info("Nenhuma oportunidade óbvia de recuperação encontrada.")
-                
-            if not riscos.empty:
-                st.error(f"**Atenção: {len(riscos)} itens saíram zerados mas não encontramos base legal para isso:**")
-                st.dataframe(riscos[['Cód. Produto', 'Descrição Produto', 'NCM', 'Carga Atual', 'DescRegra']], use_container_width=True)
+            if not oportunidades.empty: st.success(f"**{len(oportunidades)} itens com tributação excessiva:**"); st.dataframe(oportunidades[['Cód. Produto', 'Descrição Produto', 'Carga Atual', 'DescRegra', 'Potencial Recuperação']], use_container_width=True)
+            if not riscos.empty: st.error(f"**{len(riscos)} itens com risco de sonegação:**"); st.dataframe(riscos[['Cód. Produto', 'Descrição Produto', 'Carga Atual', 'DescRegra']], use_container_width=True)
 
-    # --- ABA DASHBOARD ---
+    # --- ABA DASHBOARD (GRÁFICO BLINDADO) ---
     with tabs[idx_dash]:
         st.markdown("### Visão Geral")
         deb = df_final_v['Carga Projetada'].sum() if not df_final_v.empty else 0
@@ -282,11 +260,18 @@ if tem_dados:
         
         if not df_final_v.empty:
             st.markdown("#### Top 5 Produtos (Carga Tributária)")
-            top = df_final_v.groupby('Produto')['Carga Projetada'].sum().nlargest(5).reset_index().sort_values('Carga Projetada')
-            # CORREÇÃO: Removido 'color=' para evitar erro
-            st.bar_chart(top, x="Carga Projetada", y="Produto", horizontal=True)
+            try:
+                # MODO SEGURO: Cria dataframe com índice limpo e tipos numéricos forçados
+                top = df_final_v.groupby('Produto')['Carga Projetada'].sum().nlargest(5).reset_index().sort_values('Carga Projetada')
+                # Renomeia para facilitar
+                top.columns = ['Produto', 'Carga']
+                top['Carga'] = top['Carga'].astype(float)
+                # Passa o índice como label (Forma mais antiga e robusta do Streamlit)
+                st.bar_chart(top.set_index('Produto')['Carga'])
+            except Exception as e:
+                st.warning(f"Não foi possível gerar o gráfico detalhado: {e}")
 
-    # --- ABA SIMULAÇÃO ---
+    # --- ABA SIMULAÇÃO (GRÁFICO BLINDADO) ---
     with tabs[idx_sim]:
         st.markdown("### Comparativo: Atual vs Reforma")
         t_atual = df_final_v['Carga Atual'].sum() if not df_final_v.empty else 0
@@ -298,8 +283,12 @@ if tem_dados:
         c2.metric("Nova Carga", f"R$ {t_novo:,.2f}")
         c3.metric("Variação", f"R$ {abs(delta):,.2f}", delta="Aumento" if delta>0 else "Economia", delta_color="inverse")
         
-        # CORREÇÃO: Removido 'color=' para evitar erro
-        st.bar_chart(pd.DataFrame({'Cenário': ['Atual', 'Reforma'], 'Valor': [t_atual, t_novo]}), x='Cenário', y='Valor')
+        try:
+            # MODO SEGURO: Dataframe limpo
+            df_chart = pd.DataFrame({'Cenário': ['Atual', 'Reforma'], 'Valor': [float(t_atual), float(t_novo)]})
+            st.bar_chart(df_chart.set_index('Cenário')['Valor'])
+        except:
+            st.warning("Visualização gráfica indisponível.")
 
     # --- TABELAS ---
     col_cfg = {
@@ -333,8 +322,8 @@ if tem_dados:
             if not df_final_v.empty: preparar_exibicao(df_final_v).to_excel(writer, sheet_name="Vendas", index=False)
             if not df_final_c.empty: preparar_exibicao(df_final_c).to_excel(writer, sheet_name="Compras", index=False)
             if tem_cruzamento:
-                if not so_xml.empty: so_xml.to_excel(writer, sheet_name="Omissao_SPED", index=False)
-                if not divergentes.empty: divergentes.to_excel(writer, sheet_name="Divergencia_Valor", index=False)
+                if 'so_xml' in locals() and not so_xml.empty: so_xml.to_excel(writer, sheet_name="Omissao_SPED", index=False)
+                if 'divergentes' in locals() and not divergentes.empty: divergentes.to_excel(writer, sheet_name="Divergencia_Valor", index=False)
             if 'oportunidades' in locals() and not oportunidades.empty: oportunidades.to_excel(writer, sheet_name="Recuperacao_Credito", index=False)
         st.download_button("📊 BAIXAR EXCEL COMPLETO", buf, "Auditoria.xlsx", "primary", use_container_width=True)
 
