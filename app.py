@@ -90,12 +90,13 @@ def carregar_tipi_cache(file): return motor.carregar_tipi(file)
 def carregar_nbs_governo():
     url = "https://www.gov.br/mdic/pt-br/images/REPOSITORIO/scs/decos/NBS/NBSa_2-0.csv"
     try:
-        # verify=False pula a verificação de SSL (comum falhar em sites .gov.br)
         response = requests.get(url, verify=False, timeout=10)
         if response.status_code == 200:
-            # O arquivo do governo usa ponto e vírgula e codificação 'latin1'
             content = response.content.decode('latin1')
             df = pd.read_csv(io.StringIO(content), sep=';', dtype=str)
+            df['Origem (Aba)'] = 'Gov.br (Oficial)'
+            # --- MÁGICA AQUI: Preenche buracos de células mescladas ---
+            df = df.ffill() 
             return df
     except:
         return None
@@ -374,7 +375,7 @@ elif modo_app == "⚔️ Comparador SPED vs SPED":
         st.info("Aguardando arquivos válidos para comparação...")
 
 # ==============================================================================
-# MODO 3: CONSULTA NBS ONLINE (HÍBRIDA: AUTOMÁTICA + UPLOAD)
+# MODO 3: CONSULTA NBS ONLINE (HÍBRIDA INTELIGENTE)
 # ==============================================================================
 elif modo_app == "🔍 Consulta NBS Online":
     st.markdown("""
@@ -384,7 +385,7 @@ elif modo_app == "🔍 Consulta NBS Online":
     </div>
     """, unsafe_allow_html=True)
     
-    # 1. TENTA CARREGAR DO GOVERNO AUTOMATICAMENTE
+    # 1. TENTA CARREGAR DO GOVERNO (CSV)
     if st.session_state.df_nbs is None:
         with st.spinner("🔄 Conectando ao servidor do MDIC/Governo..."):
             df = carregar_nbs_governo()
@@ -395,31 +396,42 @@ elif modo_app == "🔍 Consulta NBS Online":
                 st.warning("⚠️ Não foi possível baixar automaticamente do Gov.br.")
                 st.caption("O site pode estar fora do ar ou bloqueando a conexão. Utilize o upload abaixo.")
     
-    # 2. SE FALHAR (OU SE O USUÁRIO QUISER SOBRESCREVER), MOSTRA UPLOAD
+    # 2. UPLOAD MANUAL (SUPORTE SIMPLIFICADO: 1ª ABA OU CSV)
     if st.session_state.df_nbs is None:
-        uploaded_nbs = st.file_uploader("Upload Manual (Opcional)", type=['csv', 'xlsx'])
+        uploaded_nbs = st.file_uploader("Upload Manual (Opcional - Lê 1ª aba ou CSV)", type=['csv', 'xlsx'])
         if uploaded_nbs:
             try:
-                if uploaded_nbs.name.endswith('.csv'):
-                    df = pd.read_csv(uploaded_nbs, sep=';', encoding='latin1', dtype=str)
-                else:
+                # Se for Excel, lê a 1ª aba
+                if uploaded_nbs.name.endswith('.xlsx'):
                     df = pd.read_excel(uploaded_nbs, dtype=str)
-                st.session_state.df_nbs = df
-                st.rerun()
+                    df['Origem (Aba)'] = 'Excel Carregado'
+                    df = df.ffill() # APLICA CORREÇÃO DE CÉLULAS MESCLADAS
+                    st.session_state.df_nbs = df
+                    st.rerun()
+                
+                # Se for CSV, lê normal
+                elif uploaded_nbs.name.endswith('.csv'):
+                    df = pd.read_csv(uploaded_nbs, sep=';', encoding='latin1', dtype=str)
+                    df['Origem (Aba)'] = 'CSV Carregado'
+                    df = df.ffill() # APLICA CORREÇÃO DE CÉLULAS MESCLADAS
+                    st.session_state.df_nbs = df
+                    st.rerun()
+                    
             except Exception as e:
                 st.error(f"Erro ao ler arquivo: {e}")
 
-    # 3. MOSTRA A BUSCA
+    # 3. BUSCA UNIVERSAL
     if st.session_state.df_nbs is not None and not st.session_state.df_nbs.empty:
         st.markdown("---")
         termo = st.text_input("🔍 **Pesquisar Serviço (Nome ou Código):**", placeholder="Ex: Limpeza, 1.05, Vigilância...")
         
         if termo:
+            # Busca em todas as colunas
             mask = st.session_state.df_nbs.apply(lambda x: x.astype(str).str.contains(termo, case=False, na=False)).any(axis=1)
             resultado = st.session_state.df_nbs[mask]
             
             st.markdown(f"**Resultados: {len(resultado)}**")
             st.dataframe(resultado, use_container_width=True)
         else:
-            with st.expander("Ver Tabela Completa (Amostra)"):
+            with st.expander("Ver Amostra dos Dados"):
                 st.dataframe(st.session_state.df_nbs.head(100), use_container_width=True)
