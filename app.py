@@ -6,11 +6,11 @@ import motor
 import importlib
 import relatorio
 
-# Força o recarregamento dos módulos auxiliares
+# Força o recarregamento
 importlib.reload(motor)
 importlib.reload(relatorio)
 
-# --- CONFIGURAÇÃO DA PÁGINA ---
+# --- CONFIGURAÇÃO ---
 st.set_page_config(
     page_title="cClass Auditor AI",
     page_icon="🟧",
@@ -18,7 +18,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- ESTADO (SESSION STATE) ---
+# --- ESTADO ---
 if 'xml_vendas_df' not in st.session_state: st.session_state.xml_vendas_df = pd.DataFrame()
 if 'xml_compras_df' not in st.session_state: st.session_state.xml_compras_df = pd.DataFrame()
 if 'sped_vendas_df' not in st.session_state: st.session_state.sped_vendas_df = pd.DataFrame()
@@ -34,7 +34,7 @@ def reset_all():
     st.session_state.empresa_nome = "Nenhuma Empresa"
     st.session_state.uploader_key += 1
 
-# --- CSS (VISUAL NASCEL PREMIUM) ---
+# --- CSS ---
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
@@ -44,11 +44,8 @@ st.markdown("""
     
     .header-container {
         background: linear-gradient(135deg, #E67E22 0%, #D35400 100%);
-        padding: 25px;
-        border-radius: 12px;
-        margin-bottom: 25px;
-        box-shadow: 0 4px 15px rgba(230, 126, 34, 0.2);
-        color: white;
+        padding: 25px; border-radius: 12px; margin-bottom: 25px;
+        box-shadow: 0 4px 15px rgba(230, 126, 34, 0.2); color: white;
     }
     .main-header { font-size: 2.2rem; font-weight: 800; color: #FFFFFF; margin: 0; letter-spacing: -1px; }
     .sub-header { font-size: 1rem; color: #FDEBD0; margin-top: 5px; opacity: 0.9; }
@@ -56,16 +53,10 @@ st.markdown("""
     .stProgress > div > div > div > div { background-color: #E67E22; }
 
     div[data-testid="stMetric"] { 
-        background-color: #FFFFFF !important; 
-        border: 1px solid #E0E0E0; 
-        border-radius: 10px; 
-        padding: 15px; 
-        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        background-color: #FFFFFF !important; border: 1px solid #E0E0E0; 
+        border-radius: 10px; padding: 15px; box-shadow: 0 2px 5px rgba(0,0,0,0.05);
         border-top: 4px solid #E67E22; 
     }
-    
-    div.stButton > button[kind="primary"] { background-color: #E67E22 !important; color: white !important; border: none; font-weight: 600; transition: all 0.3s ease; }
-    div.stButton > button[kind="primary"]:hover { transform: translateY(-2px); box-shadow: 0 4px 10px rgba(230, 126, 34, 0.3); }
     
     .file-success {
         background-color: #D5F5E3; color: #196F3D; padding: 10px; border-radius: 5px;
@@ -74,13 +65,12 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- CACHE DE DADOS ---
+# --- CACHE ---
 @st.cache_data
 def carregar_bases(): return motor.carregar_base_legal(), motor.carregar_json_regras()
 @st.cache_data
 def carregar_tipi_cache(file): return motor.carregar_tipi(file)
 
-# --- SIDEBAR ---
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/3029/3029337.png", width=50)
     if st.session_state.empresa_nome != "Nenhuma Empresa":
@@ -113,7 +103,6 @@ with st.sidebar:
     mapa_lei, df_regras_json = carregar_bases()
     df_tipi = carregar_tipi_cache(uploaded_tipi)
 
-# --- HEADER ---
 st.markdown("""
 <div class="header-container">
     <div class="main-header">cClass Auditor AI </div>
@@ -139,7 +128,6 @@ def processar_arquivos_com_barra(arquivos, tipo):
     barra.empty()
     return lista
 
-# --- UPLOAD ---
 st.markdown("### 📂 Central de Arquivos")
 c_xml, c_sped = st.columns(2)
 
@@ -171,7 +159,6 @@ with c_sped:
                 st.session_state.sped_compras_df = pd.DataFrame(compras)
                 st.rerun()
 
-# --- AUDITORIA ---
 def auditar_df(df):
     if df.empty: return df
     res = df.apply(lambda row: motor.classificar_item(row, mapa_lei, df_regras_json, df_tipi, aliq_ibs/100, aliq_cbs/100), axis=1, result_type='expand')
@@ -190,9 +177,15 @@ tem_dados = not df_final_v.empty or not df_final_c.empty
 
 if tem_dados:
     cols_ordenadas = ['Cód. Produto', 'Descrição Produto', 'NCM', 'CFOP', 'Novo CST', 'cClassTrib', 'DescRegra', 'Valor', 'vICMS', 'vPIS', 'vCOFINS', 'Carga Atual', 'vIBS', 'vCBS', 'Carga Projetada', 'Validação TIPI']
+    
+    # Função auxiliar para renomear colunas
     def preparar_exibicao(df):
         if df.empty: return df
-        return df.rename(columns={'Produto': 'Descrição Produto'})[cols_ordenadas]
+        # Garante que as colunas existam antes de selecionar
+        cols_existentes = [c for c in cols_ordenadas if c in df.columns or c == 'Descrição Produto']
+        if 'Produto' in df.columns:
+            return df.rename(columns={'Produto': 'Descrição Produto'})[cols_ordenadas]
+        return df
 
     st.markdown("---")
     
@@ -221,7 +214,7 @@ if tem_dados:
             if not divergentes.empty: st.warning("⚠️ Notas com valor diferente:"); st.dataframe(divergentes)
             if so_xml.empty and divergentes.empty: st.success("✅ Cruzamento XML x SPED 100% Ok!")
 
-    # --- ABA 1: OPORTUNIDADES ---
+    # --- ABA 1: OPORTUNIDADES (CORRIGIDO NOME DAS COLUNAS) ---
     idx_oport = 1 if tem_cruzamento else 0
     idx_dash = 2 if tem_cruzamento else 1
     idx_sim = 3 if tem_cruzamento else 2
@@ -248,8 +241,17 @@ if tem_dados:
             c2.metric("⚠️ Risco Fiscal", f"R$ {total_risco:,.2f}", delta="Passivo", delta_color="inverse")
             st.divider()
             
-            if not oportunidades.empty: st.success(f"**{len(oportunidades)} itens com tributação excessiva:**"); st.dataframe(oportunidades[['Cód. Produto', 'Descrição Produto', 'Carga Atual', 'DescRegra', 'Potencial Recuperação']], use_container_width=True)
-            if not riscos.empty: st.error(f"**{len(riscos)} itens com risco de sonegação:**"); st.dataframe(riscos[['Cód. Produto', 'Descrição Produto', 'Carga Atual', 'DescRegra']], use_container_width=True)
+            # --- CORREÇÃO AQUI: USAR 'Produto' EM VEZ DE 'Descrição Produto' ---
+            if not oportunidades.empty: 
+                st.success(f"**{len(oportunidades)} itens com tributação excessiva:**")
+                st.dataframe(oportunidades[['Cód. Produto', 'Produto', 'NCM', 'Carga Atual', 'DescRegra', 'Potencial Recuperação']], use_container_width=True)
+            else: 
+                st.info("Nenhuma oportunidade óbvia de recuperação encontrada.")
+                
+            if not riscos.empty: 
+                st.error(f"**{len(riscos)} itens com risco de sonegação:**")
+                st.dataframe(riscos[['Cód. Produto', 'Produto', 'NCM', 'Carga Atual', 'DescRegra']], use_container_width=True)
+            # -------------------------------------------------------------------
 
     # --- ABA DASHBOARD ---
     with tabs[idx_dash]:
@@ -266,15 +268,12 @@ if tem_dados:
         if not df_final_v.empty:
             st.markdown("#### Top 5 Produtos (Carga Tributária)")
             try:
-                # --- PROTEÇÃO CONTRA ERRO DE GRÁFICO ---
-                # Cria DataFrame simples apenas com as colunas necessárias
-                df_top = df_final_v.groupby('Produto')['Carga Projetada'].sum().nlargest(5).reset_index()
-                # Renomeia para evitar caracteres especiais
-                df_top.columns = ['Produto', 'Carga']
-                # Define o índice para o Streamlit plotar automaticamente
-                st.bar_chart(df_top.set_index('Produto')['Carga'])
+                top = df_final_v.groupby('Produto')['Carga Projetada'].sum().nlargest(5).reset_index().sort_values('Carga Projetada')
+                top.columns = ['Produto', 'Carga']
+                top['Carga'] = top['Carga'].astype(float)
+                st.bar_chart(top.set_index('Produto')['Carga'])
             except:
-                st.warning("⚠️ Gráfico Top 5 indisponível (Erro de renderização).")
+                st.warning("⚠️ Gráfico Top 5 indisponível.")
 
     # --- ABA SIMULAÇÃO ---
     with tabs[idx_sim]:
@@ -289,9 +288,8 @@ if tem_dados:
         c3.metric("Variação", f"R$ {abs(delta):,.2f}", delta="Aumento" if delta>0 else "Economia", delta_color="inverse")
         
         try:
-            # --- PROTEÇÃO CONTRA ERRO DE GRÁFICO ---
-            df_comp = pd.DataFrame({'Cenário': ['Atual', 'Reforma'], 'Valor': [float(t_atual), float(t_novo)]})
-            st.bar_chart(df_comp.set_index('Cenário')['Valor'])
+            df_chart = pd.DataFrame({'Cenário': ['Atual', 'Reforma'], 'Valor': [float(t_atual), float(t_novo)]})
+            st.bar_chart(df_chart.set_index('Cenário')['Valor'])
         except:
             st.warning("⚠️ Gráfico Comparativo indisponível.")
 
