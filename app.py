@@ -5,13 +5,12 @@ import io
 import motor 
 import importlib
 import relatorio
-import requests
 
-# Recarrega módulos
+# Recarrega módulos auxiliares
 importlib.reload(motor)
 importlib.reload(relatorio)
 
-# --- CONFIGURAÇÃO ---
+# --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(
     page_title="cClass Auditor AI",
     page_icon="⚖️",
@@ -27,6 +26,7 @@ def init_df(key, columns=None):
         else:
             st.session_state[key] = pd.DataFrame()
 
+# Inicializa DataFrames com colunas essenciais
 cols_padrao = ['Chave NFe', 'Valor', 'Produto', 'NCM']
 init_df('xml_vendas_df', cols_padrao)
 init_df('xml_compras_df', cols_padrao)
@@ -37,21 +37,17 @@ init_df('sped1_compras', cols_padrao)
 init_df('sped2_vendas', cols_padrao)
 init_df('sped2_compras', cols_padrao)
 
-# Estado para a tabela NBS
-if 'df_nbs' not in st.session_state: st.session_state.df_nbs = None
-
 if 'empresa_nome' not in st.session_state: st.session_state.empresa_nome = "Nenhuma Empresa"
 if 'uploader_key' not in st.session_state: st.session_state.uploader_key = 0
 
 def reset_all():
     for key in list(st.session_state.keys()):
         if 'df' in key or 'sped' in key:
-            if key != 'df_nbs': 
-                st.session_state[key] = pd.DataFrame(columns=cols_padrao)
+            st.session_state[key] = pd.DataFrame(columns=cols_padrao)
     st.session_state.empresa_nome = "Nenhuma Empresa"
     st.session_state.uploader_key += 1
 
-# --- CSS ---
+# --- CSS (ESTILO PREMIUM) ---
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
@@ -85,23 +81,6 @@ def carregar_bases(): return motor.carregar_base_legal(), motor.carregar_json_re
 @st.cache_data
 def carregar_tipi_cache(file): return motor.carregar_tipi(file)
 
-# --- FUNÇÃO DE DOWNLOAD NBS ---
-@st.cache_data(show_spinner=False)
-def carregar_nbs_governo():
-    url = "https://www.gov.br/mdic/pt-br/images/REPOSITORIO/scs/decos/NBS/NBSa_2-0.csv"
-    try:
-        response = requests.get(url, verify=False, timeout=10)
-        if response.status_code == 200:
-            content = response.content.decode('latin1')
-            df = pd.read_csv(io.StringIO(content), sep=';', dtype=str)
-            df['Origem (Aba)'] = 'Gov.br (Oficial)'
-            # --- MÁGICA AQUI: Preenche buracos de células mescladas ---
-            df = df.ffill() 
-            return df
-    except:
-        return None
-    return None
-
 # --- SIDEBAR ---
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/2910/2910768.png", width=70)
@@ -109,7 +88,7 @@ with st.sidebar:
     st.markdown("### Selecione o Modo:")
     modo_app = st.radio(
         "Modo de Operação", 
-        ["📊 Auditoria & Reforma", "⚔️ Comparador SPED vs SPED", "🔍 Consulta NBS Online"], 
+        ["📊 Auditoria & Reforma", "⚔️ Comparador SPED vs SPED"], 
         label_visibility="collapsed"
     )
     st.divider()
@@ -127,9 +106,9 @@ with st.sidebar:
             if st.button("🔄 Recarregar"):
                 carregar_bases.clear()
                 st.rerun()
-    
-    elif modo_app == "🔍 Consulta NBS Online":
-        st.info("ℹ️ Conectado ao MDIC/Gov.br")
+                
+    elif modo_app == "⚔️ Comparador SPED vs SPED":
+        st.info("ℹ️ Validação de Arquivos.")
 
     st.markdown("<br>", unsafe_allow_html=True)
     if st.button("🗑️ LIMPAR TUDO", type="secondary"):
@@ -139,7 +118,7 @@ with st.sidebar:
     mapa_lei, df_regras_json = carregar_bases()
     df_tipi = carregar_tipi_cache(uploaded_tipi)
 
-# --- FUNÇÕES ---
+# --- FUNÇÕES AUXILIARES ---
 ns = {'ns': 'http://www.portalfiscal.inf.br/nfe'}
 
 def processar_arquivos_com_barra(arquivos, tipo):
@@ -236,6 +215,7 @@ if modo_app == "📊 Auditoria & Reforma":
             
         tabs = st.tabs(abas)
         
+        # 1. CRUZAMENTO
         if tem_cruzamento:
             with tabs[abas.index("⚔️ Cruzamento XML x SPED")]:
                 st.markdown("### ⚔️ Auditoria Cruzada")
@@ -247,28 +227,39 @@ if modo_app == "📊 Auditoria & Reforma":
                 div = cross[(cross['_merge']=='both') & (abs(cross['V_XML'] - cross['V_SPED']) > 0.01)]
                 
                 k1, k2 = st.columns(2)
-                k1.metric("Omissão SPED", len(so_xml), delta_color="inverse")
-                k2.metric("Divergência Valor", len(div), delta_color="inverse")
+                k1.metric("Omissão SPED", len(so_xml), delta="Risco Alto", delta_color="inverse")
+                k2.metric("Divergência Valor", len(div), delta="Erro Escrituração", delta_color="inverse")
                 
                 if not so_xml.empty: st.error("🚨 Notas fora do SPED:"); st.dataframe(so_xml)
-                if not div.empty: st.warning("⚠️ Valores Divergentes:"); st.dataframe(div)
+                if not div.empty: st.warning("⚠️ Valores divergentes:"); st.dataframe(div)
 
+        # 2. SAÍDAS
         with tabs[abas.index("📤 Saídas")]:
             if not df_final_v.empty: st.dataframe(preparar_exibicao(df_final_v), use_container_width=True)
             else: st.info("Sem dados de Saída.")
 
+        # 3. ENTRADAS
         with tabs[abas.index("📥 Entradas")]:
             if not df_final_c.empty: st.dataframe(preparar_exibicao(df_final_c), use_container_width=True)
             else: st.info("Sem dados de Entrada.")
 
+        # 4. SIMULAÇÃO
         with tabs[abas.index("⚖️ Simulação")]:
             st.markdown("### Comparativo")
             atu = df_final_v['Carga Atual'].sum() if 'Carga Atual' in df_final_v.columns else 0.0
             nov = df_final_v['Carga Projetada'].sum() if 'Carga Projetada' in df_final_v.columns else 0.0
+            
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Carga Atual", f"R$ {atu:,.2f}")
+            c2.metric("Carga Reforma", f"R$ {nov:,.2f}")
+            delta = nov - atu
+            c3.metric("Variação", f"R$ {abs(delta):,.2f}", delta="Aumento" if delta > 0 else "Economia", delta_color="inverse")
+            
             try:
                 st.bar_chart(pd.DataFrame({'Cenário':['Atual','Novo'], 'Valor':[float(atu),float(nov)]}).set_index('Cenário')['Valor'])
             except: st.warning("Gráfico indisponível.")
 
+        # 5. DASHBOARD
         with tabs[abas.index("📊 Dashboard")]:
             st.markdown("### Visão Geral")
             d = df_final_v['Carga Projetada'].sum() if 'Carga Projetada' in df_final_v.columns else 0.0
@@ -281,15 +272,16 @@ if modo_app == "📊 Auditoria & Reforma":
                     st.bar_chart(top.set_index('Produto')['Carga Projetada'])
             except: pass
 
+        # EXPORTAÇÃO
         st.markdown("---")
-        st.markdown("### 📥 Exportar Relatórios Completos")
+        st.markdown("### 📥 Exportar Relatórios")
         c1, c2 = st.columns(2)
         with c1:
             try:
                 if not df_final_v.empty or not df_final_c.empty:
                     pdf = relatorio.gerar_pdf_bytes(st.session_state.empresa_nome, df_final_v, df_final_c)
                     st.download_button("📄 BAIXAR LAUDO PDF", pdf, "Laudo_Auditoria.pdf", "application/pdf", use_container_width=True)
-            except: st.error("Erro ao gerar PDF.")
+            except: st.error("Erro PDF")
         with c2:
             buf = io.BytesIO()
             with pd.ExcelWriter(buf, engine='openpyxl') as writer:
@@ -298,7 +290,7 @@ if modo_app == "📊 Auditoria & Reforma":
                 if tem_cruzamento:
                     if 'so_xml' in locals() and not so_xml.empty: so_xml.to_excel(writer, sheet_name="Omissao_SPED", index=False)
                     if 'div' in locals() and not div.empty: div.to_excel(writer, sheet_name="Divergencia_Valor", index=False)
-            st.download_button("📊 BAIXAR EXCEL COMPLETO", buf, "Auditoria_Dados.xlsx", "primary", use_container_width=True)
+            st.download_button("📊 BAIXAR EXCEL", buf, "Auditoria_Dados.xlsx", "primary", use_container_width=True)
 
 
 # ==============================================================================
@@ -373,65 +365,3 @@ elif modo_app == "⚔️ Comparador SPED vs SPED":
                 st.warning("⚠️ Arquivos carregados, mas não contêm dados de venda válidos.")
     except Exception as e:
         st.info("Aguardando arquivos válidos para comparação...")
-
-# ==============================================================================
-# MODO 3: CONSULTA NBS ONLINE (HÍBRIDA INTELIGENTE)
-# ==============================================================================
-elif modo_app == "🔍 Consulta NBS Online":
-    st.markdown("""
-    <div class="header-container">
-        <div class="main-header">Consultor de Serviços (NBS Online)</div>
-        <div class="sub-header">Base Atualizada Automaticamente via Gov.br</div>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # 1. TENTA CARREGAR DO GOVERNO (CSV)
-    if st.session_state.df_nbs is None:
-        with st.spinner("🔄 Conectando ao servidor do MDIC/Governo..."):
-            df = carregar_nbs_governo()
-            if df is not None:
-                st.session_state.df_nbs = df
-                st.success("✅ Tabela NBS Oficial Baixada com Sucesso!")
-            else:
-                st.warning("⚠️ Não foi possível baixar automaticamente do Gov.br.")
-                st.caption("O site pode estar fora do ar ou bloqueando a conexão. Utilize o upload abaixo.")
-    
-    # 2. UPLOAD MANUAL (SUPORTE SIMPLIFICADO: 1ª ABA OU CSV)
-    if st.session_state.df_nbs is None:
-        uploaded_nbs = st.file_uploader("Upload Manual (Opcional - Lê 1ª aba ou CSV)", type=['csv', 'xlsx'])
-        if uploaded_nbs:
-            try:
-                # Se for Excel, lê a 1ª aba
-                if uploaded_nbs.name.endswith('.xlsx'):
-                    df = pd.read_excel(uploaded_nbs, dtype=str)
-                    df['Origem (Aba)'] = 'Excel Carregado'
-                    df = df.ffill() # APLICA CORREÇÃO DE CÉLULAS MESCLADAS
-                    st.session_state.df_nbs = df
-                    st.rerun()
-                
-                # Se for CSV, lê normal
-                elif uploaded_nbs.name.endswith('.csv'):
-                    df = pd.read_csv(uploaded_nbs, sep=';', encoding='latin1', dtype=str)
-                    df['Origem (Aba)'] = 'CSV Carregado'
-                    df = df.ffill() # APLICA CORREÇÃO DE CÉLULAS MESCLADAS
-                    st.session_state.df_nbs = df
-                    st.rerun()
-                    
-            except Exception as e:
-                st.error(f"Erro ao ler arquivo: {e}")
-
-    # 3. BUSCA UNIVERSAL
-    if st.session_state.df_nbs is not None and not st.session_state.df_nbs.empty:
-        st.markdown("---")
-        termo = st.text_input("🔍 **Pesquisar Serviço (Nome ou Código):**", placeholder="Ex: Limpeza, 1.05, Vigilância...")
-        
-        if termo:
-            # Busca em todas as colunas
-            mask = st.session_state.df_nbs.apply(lambda x: x.astype(str).str.contains(termo, case=False, na=False)).any(axis=1)
-            resultado = st.session_state.df_nbs[mask]
-            
-            st.markdown(f"**Resultados: {len(resultado)}**")
-            st.dataframe(resultado, use_container_width=True)
-        else:
-            with st.expander("Ver Amostra dos Dados"):
-                st.dataframe(st.session_state.df_nbs.head(100), use_container_width=True)
