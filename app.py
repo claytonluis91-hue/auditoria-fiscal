@@ -13,7 +13,7 @@ importlib.reload(relatorio)
 # --- CONFIGURAÇÃO ---
 st.set_page_config(
     page_title="cClass Auditor AI",
-    page_icon="⚖️", # Mudei o ícone da aba do navegador também
+    page_icon="⚖️",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -26,7 +26,7 @@ def init_df(key, columns=None):
         else:
             st.session_state[key] = pd.DataFrame()
 
-# Inicializa DataFrames com colunas essenciais
+# Inicializa DataFrames
 cols_padrao = ['Chave NFe', 'Valor', 'Produto', 'NCM']
 init_df('xml_vendas_df', cols_padrao)
 init_df('xml_compras_df', cols_padrao)
@@ -72,9 +72,6 @@ st.markdown("""
         background-color: #D5F5E3; color: #196F3D; padding: 10px; border-radius: 5px;
         border: 1px solid #ABEBC6; margin-top: 5px; margin-bottom: 10px; font-weight: 600; text-align: center;
     }
-    .correction-box {
-        background-color: #FEF9E7; border: 1px solid #F39C12; padding: 20px; border-radius: 10px; margin-top: 20px;
-    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -86,9 +83,7 @@ def carregar_tipi_cache(file): return motor.carregar_tipi(file)
 
 # --- SIDEBAR ---
 with st.sidebar:
-    # --- NOVO ÍCONE DE BALANÇA ---
     st.image("https://cdn-icons-png.flaticon.com/512/2910/2910768.png", width=70)
-    
     st.markdown("### Selecione o Modo:")
     modo_app = st.radio("Modo de Operação", ["📊 Auditoria & Reforma", "⚔️ Comparador SPED vs SPED"], label_visibility="collapsed")
     st.divider()
@@ -120,9 +115,6 @@ with st.sidebar:
 
 # --- FUNÇÕES ---
 ns = {'ns': 'http://www.portalfiscal.inf.br/nfe'}
-
-def convert_df_to_csv(df):
-    return df.to_csv(index=False, sep=';', decimal=',', encoding='utf-8-sig').encode('utf-8-sig')
 
 def processar_arquivos_com_barra(arquivos, tipo):
     lista = []
@@ -161,7 +153,8 @@ if modo_app == "📊 Auditoria & Reforma":
     st.markdown("""
     <div class="header-container">
         <div class="main-header">cClass Auditor AI </div>
-        <div class="sub-header">Auditoria de Conformidade e Reforma Tributária</div> </div>
+        <div class="sub-header">Auditoria de Conformidade e Reforma Tributária</div>
+    </div>
     """, unsafe_allow_html=True)
 
     st.markdown("### 📂 Central de Arquivos")
@@ -211,15 +204,21 @@ if modo_app == "📊 Auditoria & Reforma":
 
     if tem_dados:
         st.markdown("---")
-        abas = ["📤 Saídas", "📥 Entradas", "⚖️ Simulação", "📊 Dashboard", "💎 Oportunidades & Riscos"]
+        
+        # --- ORDEM AJUSTADA: REMOVIDO "OPORTUNIDADES" ---
+        abas = ["📤 Saídas", "📥 Entradas", "⚖️ Simulação", "📊 Dashboard"]
+        
         tem_cruzamento = (not df_xml_v.empty or not df_xml_c.empty) and (not df_sped_v.empty or not df_sped_c.empty)
         if tem_cruzamento: abas.insert(0, "⚔️ Cruzamento XML x SPED")
             
         tabs = st.tabs(abas)
         
+        # 1. ABA CRUZAMENTO (SE HOUVER)
         if tem_cruzamento:
-            with tabs[0]:
+            with tabs[abas.index("⚔️ Cruzamento XML x SPED")]:
                 st.markdown("### ⚔️ Auditoria Cruzada")
+                st.caption("Confronto de consistência: Documentos Fiscais (XML) vs Escrituração (SPED)")
+                
                 xml_val = df_xml_v.groupby('Chave NFe')['Valor'].sum().reset_index().rename(columns={'Valor':'V_XML'}) if not df_xml_v.empty else pd.DataFrame(columns=['Chave NFe', 'V_XML'])
                 sped_val = df_sped_v.groupby('Chave NFe')['Valor'].sum().reset_index().rename(columns={'Valor':'V_SPED'}) if not df_sped_v.empty else pd.DataFrame(columns=['Chave NFe', 'V_SPED'])
                 
@@ -228,63 +227,53 @@ if modo_app == "📊 Auditoria & Reforma":
                 div = cross[(cross['_merge']=='both') & (abs(cross['V_XML'] - cross['V_SPED']) > 0.01)]
                 
                 k1, k2 = st.columns(2)
-                k1.metric("Omissão SPED", len(so_xml), delta_color="inverse")
-                k2.metric("Divergência Valor", len(div), delta_color="inverse")
+                k1.metric("Omissão SPED", len(so_xml), delta="Risco Alto", delta_color="inverse")
+                k2.metric("Divergência Valor", len(div), delta="Erro Escrituração", delta_color="inverse")
                 
-                if not so_xml.empty: st.error("🚨 Notas fora do SPED:"); st.dataframe(so_xml)
-                if not div.empty: st.warning("⚠️ Valores Divergentes:"); st.dataframe(div)
+                if not so_xml.empty: st.error("🚨 Notas emitidas (XML) NÃO encontradas no SPED:"); st.dataframe(so_xml)
+                if not div.empty: st.warning("⚠️ Notas com valores divergentes (XML ≠ SPED):"); st.dataframe(div)
 
+        # 2. SAÍDAS
         with tabs[abas.index("📤 Saídas")]:
             if not df_final_v.empty: st.dataframe(preparar_exibicao(df_final_v), use_container_width=True)
             else: st.info("Sem dados de Saída.")
 
+        # 3. ENTRADAS
         with tabs[abas.index("📥 Entradas")]:
             if not df_final_c.empty: st.dataframe(preparar_exibicao(df_final_c), use_container_width=True)
             else: st.info("Sem dados de Entrada.")
 
+        # 4. SIMULAÇÃO
         with tabs[abas.index("⚖️ Simulação")]:
-            st.markdown("### Comparativo")
+            st.markdown("### Cenário: Carga Atual vs. Reforma Tributária")
+            st.caption("Projeção baseada na substituição de ICMS/PIS/COFINS por IBS/CBS.")
+            
             atu = df_final_v['Carga Atual'].sum() if 'Carga Atual' in df_final_v.columns else 0.0
             nov = df_final_v['Carga Projetada'].sum() if 'Carga Projetada' in df_final_v.columns else 0.0
+            
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Carga Atual (Est.)", f"R$ {atu:,.2f}")
+            c2.metric("Carga Reforma (Est.)", f"R$ {nov:,.2f}")
+            delta = nov - atu
+            c3.metric("Variação de Caixa", f"R$ {abs(delta):,.2f}", delta="Aumento" if delta > 0 else "Economia", delta_color="inverse")
+
             try:
                 st.bar_chart(pd.DataFrame({'Cenário':['Atual','Novo'], 'Valor':[float(atu),float(nov)]}).set_index('Cenário')['Valor'])
             except: st.warning("Gráfico indisponível.")
 
+        # 5. DASHBOARD
         with tabs[abas.index("📊 Dashboard")]:
-            st.markdown("### Visão Geral")
+            st.markdown("### Visão Geral da Movimentação")
             d = df_final_v['Carga Projetada'].sum() if 'Carga Projetada' in df_final_v.columns else 0.0
             c = df_final_c['Carga Projetada'].sum() if 'Carga Projetada' in df_final_c.columns else 0.0
             k1, k2, k3 = st.columns(3)
-            k1.metric("Débitos", f"R$ {d:,.2f}"); k2.metric("Créditos", f"R$ {c:,.2f}"); k3.metric("Saldo", f"R$ {d-c:,.2f}")
+            k1.metric("Débitos (Saída)", f"R$ {d:,.2f}"); k2.metric("Créditos (Entrada)", f"R$ {c:,.2f}"); k3.metric("Saldo IBS/CBS", f"R$ {d-c:,.2f}")
             try:
                 if 'Carga Projetada' in df_final_v.columns:
+                    st.markdown("#### Top 5 Produtos (Maior Carga)")
                     top = df_final_v.groupby('Produto')['Carga Projetada'].sum().nlargest(5).reset_index()
                     st.bar_chart(top.set_index('Produto')['Carga Projetada'])
             except: pass
-
-        with tabs[abas.index("💎 Oportunidades & Riscos")]:
-            st.markdown("### 💎 Análise de Inteligência Fiscal")
-            if not df_final_v.empty and 'Status' in df_final_v.columns:
-                op = df_final_v[(df_final_v['Carga Atual']>0) & (df_final_v['Status'].str.contains("ZERO") | df_final_v['Status'].str.contains("REDUZIDA"))].copy()
-                ri = df_final_v[(df_final_v['Carga Atual']==0) & (df_final_v['Status']=="PADRAO")]
-                
-                c1, c2 = st.columns(2)
-                c1.metric("💰 Recuperável", f"R$ {op['Carga Atual'].sum():,.2f}")
-                c2.metric("⚠️ Risco", f"R$ {ri['Carga Projetada'].sum():,.2f}")
-                
-                if not op.empty:
-                    st.success("Itens pagando a mais:")
-                    st.dataframe(op[['Produto', 'NCM', 'Carga Atual', 'DescRegra']], use_container_width=True)
-                    st.markdown('<div class="correction-box">', unsafe_allow_html=True)
-                    st.markdown("#### 🛠️ Kit de Correção")
-                    df_cor = op[['Cód. Produto', 'Produto', 'NCM', 'DescRegra']].copy()
-                    df_cor.columns = ['COD', 'DESCRICAO', 'NCM_ATUAL', 'REGRA_SUGERIDA']
-                    st.download_button("📥 BAIXAR CSV", convert_df_to_csv(df_cor), "Correcao.csv", "text/csv")
-                    st.markdown('</div>', unsafe_allow_html=True)
-
-                if not ri.empty: st.error("Itens pagando a menos:"); st.dataframe(ri[['Produto', 'NCM', 'DescRegra']], use_container_width=True)
-            else:
-                st.info("Necessário dados de Venda para análise de oportunidades.")
 
         st.markdown("---")
         st.markdown("### 📥 Exportar Relatórios Completos")
@@ -293,7 +282,7 @@ if modo_app == "📊 Auditoria & Reforma":
             try:
                 if not df_final_v.empty or not df_final_c.empty:
                     pdf = relatorio.gerar_pdf_bytes(st.session_state.empresa_nome, df_final_v, df_final_c)
-                    st.download_button("📄 BAIXAR LAUDO PDF", pdf, "Laudo_Auditoria.pdf", "application/pdf", use_container_width=True)
+                    st.download_button("📄 BAIXAR LAUDO TÉCNICO (PDF)", pdf, "Laudo_Auditoria.pdf", "application/pdf", use_container_width=True)
             except: st.error("Erro ao gerar PDF.")
         with c2:
             buf = io.BytesIO()
@@ -303,8 +292,7 @@ if modo_app == "📊 Auditoria & Reforma":
                 if tem_cruzamento:
                     if 'so_xml' in locals() and not so_xml.empty: so_xml.to_excel(writer, sheet_name="Omissao_SPED", index=False)
                     if 'div' in locals() and not div.empty: div.to_excel(writer, sheet_name="Divergencia_Valor", index=False)
-                if 'op' in locals() and not op.empty: op.to_excel(writer, sheet_name="Oportunidades", index=False)
-            st.download_button("📊 BAIXAR EXCEL COMPLETO", buf, "Auditoria_Dados.xlsx", "primary", use_container_width=True)
+            st.download_button("📊 BAIXAR PLANILHAS (EXCEL)", buf, "Auditoria_Dados.xlsx", "primary", use_container_width=True)
 
 
 # ==============================================================================
