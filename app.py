@@ -37,7 +37,7 @@ init_df('sped1_compras', cols_padrao)
 init_df('sped2_vendas', cols_padrao)
 init_df('sped2_compras', cols_padrao)
 
-# NBS Cache (para não baixar toda hora)
+# Estado para a tabela NBS
 if 'df_nbs' not in st.session_state: st.session_state.df_nbs = None
 
 if 'empresa_nome' not in st.session_state: st.session_state.empresa_nome = "Nenhuma Empresa"
@@ -85,21 +85,21 @@ def carregar_bases(): return motor.carregar_base_legal(), motor.carregar_json_re
 @st.cache_data
 def carregar_tipi_cache(file): return motor.carregar_tipi(file)
 
-# Função Inteligente para Baixar NBS do Governo
-@st.cache_data(ttl=3600) # Cache por 1 hora
-def baixar_nbs_gov():
+# --- FUNÇÃO DE DOWNLOAD NBS ---
+@st.cache_data(show_spinner=False)
+def carregar_nbs_governo():
     url = "https://www.gov.br/mdic/pt-br/images/REPOSITORIO/scs/decos/NBS/NBSa_2-0.csv"
     try:
-        # Tenta baixar direto (com verify=False para evitar erro de certificado do gov)
+        # verify=False pula a verificação de SSL (comum falhar em sites .gov.br)
         response = requests.get(url, verify=False, timeout=10)
         if response.status_code == 200:
-            # Lê o CSV direto da memória
-            content = response.content.decode('latin1') # Governo usa latin1 geralmente
+            # O arquivo do governo usa ponto e vírgula e codificação 'latin1'
+            content = response.content.decode('latin1')
             df = pd.read_csv(io.StringIO(content), sep=';', dtype=str)
             return df
-        return None
     except:
         return None
+    return None
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -128,7 +128,7 @@ with st.sidebar:
                 st.rerun()
     
     elif modo_app == "🔍 Consulta NBS Online":
-        st.info("ℹ️ Conectado à base do MDIC/Gov.br")
+        st.info("ℹ️ Conectado ao MDIC/Gov.br")
 
     st.markdown("<br>", unsafe_allow_html=True)
     if st.button("🗑️ LIMPAR TUDO", type="secondary"):
@@ -230,7 +230,6 @@ if modo_app == "📊 Auditoria & Reforma":
     if tem_dados:
         st.markdown("---")
         abas = ["📤 Saídas", "📥 Entradas", "⚖️ Simulação", "📊 Dashboard"]
-        
         tem_cruzamento = (not df_xml_v.empty or not df_xml_c.empty) and (not df_sped_v.empty or not df_sped_c.empty)
         if tem_cruzamento: abas.insert(0, "⚔️ Cruzamento XML x SPED")
             
@@ -375,7 +374,7 @@ elif modo_app == "⚔️ Comparador SPED vs SPED":
         st.info("Aguardando arquivos válidos para comparação...")
 
 # ==============================================================================
-# MODO 3: CONSULTA NBS ONLINE (AUTOMÁTICA)
+# MODO 3: CONSULTA NBS ONLINE (HÍBRIDA: AUTOMÁTICA + UPLOAD)
 # ==============================================================================
 elif modo_app == "🔍 Consulta NBS Online":
     st.markdown("""
@@ -385,20 +384,20 @@ elif modo_app == "🔍 Consulta NBS Online":
     </div>
     """, unsafe_allow_html=True)
     
-    # 1. TENTA CARREGAR DO GOVERNO
+    # 1. TENTA CARREGAR DO GOVERNO AUTOMATICAMENTE
     if st.session_state.df_nbs is None:
         with st.spinner("🔄 Conectando ao servidor do MDIC/Governo..."):
-            df = baixar_nbs_gov()
+            df = carregar_nbs_governo()
             if df is not None:
                 st.session_state.df_nbs = df
-                st.success("✅ Tabela NBS Oficial Carregada!")
+                st.success("✅ Tabela NBS Oficial Baixada com Sucesso!")
             else:
-                st.warning("⚠️ Não foi possível baixar automaticamente do Gov.br (Site instável ou sem internet).")
-                st.info("👇 Por favor, carregue o arquivo manualmente se tiver.")
+                st.warning("⚠️ Não foi possível baixar automaticamente do Gov.br.")
+                st.caption("O site pode estar fora do ar ou bloqueando a conexão. Utilize o upload abaixo.")
     
-    # 2. SE FALHAR, MOSTRA O UPLOAD
+    # 2. SE FALHAR (OU SE O USUÁRIO QUISER SOBRESCREVER), MOSTRA UPLOAD
     if st.session_state.df_nbs is None:
-        uploaded_nbs = st.file_uploader("Upload Manual da NBS (CSV ou Excel)", type=['csv', 'xlsx'])
+        uploaded_nbs = st.file_uploader("Upload Manual (Opcional)", type=['csv', 'xlsx'])
         if uploaded_nbs:
             try:
                 if uploaded_nbs.name.endswith('.csv'):
@@ -410,7 +409,7 @@ elif modo_app == "🔍 Consulta NBS Online":
             except Exception as e:
                 st.error(f"Erro ao ler arquivo: {e}")
 
-    # 3. MOSTRA A BUSCA (SE TIVER DADOS)
+    # 3. MOSTRA A BUSCA
     if st.session_state.df_nbs is not None and not st.session_state.df_nbs.empty:
         st.markdown("---")
         termo = st.text_input("🔍 **Pesquisar Serviço (Nome ou Código):**", placeholder="Ex: Limpeza, 1.05, Vigilância...")
