@@ -13,7 +13,7 @@ importlib.reload(relatorio)
 # --- CONFIGURAÇÃO ---
 st.set_page_config(
     page_title="cClass Auditor AI",
-    page_icon="🟧",
+    page_icon="⚖️", # Mudei o ícone da aba do navegador também
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -86,7 +86,9 @@ def carregar_tipi_cache(file): return motor.carregar_tipi(file)
 
 # --- SIDEBAR ---
 with st.sidebar:
-    st.image("https://cdn-icons-png.flaticon.com/512/3029/3029337.png", width=50)
+    # --- NOVO ÍCONE DE BALANÇA ---
+    st.image("https://cdn-icons-png.flaticon.com/512/2910/2910768.png", width=70)
+    
     st.markdown("### Selecione o Modo:")
     modo_app = st.radio("Modo de Operação", ["📊 Auditoria & Reforma", "⚔️ Comparador SPED vs SPED"], label_visibility="collapsed")
     st.divider()
@@ -159,8 +161,7 @@ if modo_app == "📊 Auditoria & Reforma":
     st.markdown("""
     <div class="header-container">
         <div class="main-header">cClass Auditor AI </div>
-        <div class="sub-header">Auditoria de Conformidade e Reforma Tributária | Powered by Nascel</div>
-    </div>
+        <div class="sub-header">Auditoria de Conformidade e Reforma Tributária</div> </div>
     """, unsafe_allow_html=True)
 
     st.markdown("### 📂 Central de Arquivos")
@@ -210,21 +211,14 @@ if modo_app == "📊 Auditoria & Reforma":
 
     if tem_dados:
         st.markdown("---")
-        
-        # --- DEFINIÇÃO DA ORDEM DAS ABAS (PEDIDO DO CLAYTON) ---
         abas = ["📤 Saídas", "📥 Entradas", "⚖️ Simulação", "📊 Dashboard", "💎 Oportunidades & Riscos"]
-        
-        # Cruzamento entra em 1º SE existir
         tem_cruzamento = (not df_xml_v.empty or not df_xml_c.empty) and (not df_sped_v.empty or not df_sped_c.empty)
         if tem_cruzamento: abas.insert(0, "⚔️ Cruzamento XML x SPED")
             
         tabs = st.tabs(abas)
         
-        # --- LÓGICA DE PREENCHIMENTO DAS ABAS (DINÂMICA) ---
-        
-        # 1. ABA CRUZAMENTO (Opcional)
         if tem_cruzamento:
-            with tabs[abas.index("⚔️ Cruzamento XML x SPED")]:
+            with tabs[0]:
                 st.markdown("### ⚔️ Auditoria Cruzada")
                 xml_val = df_xml_v.groupby('Chave NFe')['Valor'].sum().reset_index().rename(columns={'Valor':'V_XML'}) if not df_xml_v.empty else pd.DataFrame(columns=['Chave NFe', 'V_XML'])
                 sped_val = df_sped_v.groupby('Chave NFe')['Valor'].sum().reset_index().rename(columns={'Valor':'V_SPED'}) if not df_sped_v.empty else pd.DataFrame(columns=['Chave NFe', 'V_SPED'])
@@ -240,27 +234,22 @@ if modo_app == "📊 Auditoria & Reforma":
                 if not so_xml.empty: st.error("🚨 Notas fora do SPED:"); st.dataframe(so_xml)
                 if not div.empty: st.warning("⚠️ Valores Divergentes:"); st.dataframe(div)
 
-        # 2. ABA SAÍDAS
         with tabs[abas.index("📤 Saídas")]:
             if not df_final_v.empty: st.dataframe(preparar_exibicao(df_final_v), use_container_width=True)
             else: st.info("Sem dados de Saída.")
 
-        # 3. ABA ENTRADAS
         with tabs[abas.index("📥 Entradas")]:
             if not df_final_c.empty: st.dataframe(preparar_exibicao(df_final_c), use_container_width=True)
             else: st.info("Sem dados de Entrada.")
 
-        # 4. ABA SIMULAÇÃO
         with tabs[abas.index("⚖️ Simulação")]:
             st.markdown("### Comparativo")
-            # Proteção contra coluna inexistente
             atu = df_final_v['Carga Atual'].sum() if 'Carga Atual' in df_final_v.columns else 0.0
             nov = df_final_v['Carga Projetada'].sum() if 'Carga Projetada' in df_final_v.columns else 0.0
             try:
                 st.bar_chart(pd.DataFrame({'Cenário':['Atual','Novo'], 'Valor':[float(atu),float(nov)]}).set_index('Cenário')['Valor'])
             except: st.warning("Gráfico indisponível.")
 
-        # 5. ABA DASHBOARD
         with tabs[abas.index("📊 Dashboard")]:
             st.markdown("### Visão Geral")
             d = df_final_v['Carga Projetada'].sum() if 'Carga Projetada' in df_final_v.columns else 0.0
@@ -273,7 +262,6 @@ if modo_app == "📊 Auditoria & Reforma":
                     st.bar_chart(top.set_index('Produto')['Carga Projetada'])
             except: pass
 
-        # 6. ABA OPORTUNIDADES
         with tabs[abas.index("💎 Oportunidades & Riscos")]:
             st.markdown("### 💎 Análise de Inteligência Fiscal")
             if not df_final_v.empty and 'Status' in df_final_v.columns:
@@ -298,13 +286,11 @@ if modo_app == "📊 Auditoria & Reforma":
             else:
                 st.info("Necessário dados de Venda para análise de oportunidades.")
 
-        # --- EXPORTAR RELATÓRIOS (RESGATADO E FIXO NO FINAL) ---
         st.markdown("---")
         st.markdown("### 📥 Exportar Relatórios Completos")
         c1, c2 = st.columns(2)
         with c1:
             try:
-                # Gera PDF se houver qualquer dado
                 if not df_final_v.empty or not df_final_c.empty:
                     pdf = relatorio.gerar_pdf_bytes(st.session_state.empresa_nome, df_final_v, df_final_c)
                     st.download_button("📄 BAIXAR LAUDO PDF", pdf, "Laudo_Auditoria.pdf", "application/pdf", use_container_width=True)
@@ -312,7 +298,6 @@ if modo_app == "📊 Auditoria & Reforma":
         with c2:
             buf = io.BytesIO()
             with pd.ExcelWriter(buf, engine='openpyxl') as writer:
-                # Exporta na ordem solicitada
                 if not df_final_v.empty: preparing_df = preparar_exibicao(df_final_v); preparing_df.to_excel(writer, sheet_name="Saidas", index=False)
                 if not df_final_c.empty: preparing_df = preparar_exibicao(df_final_c); preparing_df.to_excel(writer, sheet_name="Entradas", index=False)
                 if tem_cruzamento:
@@ -323,7 +308,7 @@ if modo_app == "📊 Auditoria & Reforma":
 
 
 # ==============================================================================
-# MODO 2: COMPARADOR SPED VS SPED (BLINDADO)
+# MODO 2: COMPARADOR SPED VS SPED
 # ==============================================================================
 elif modo_app == "⚔️ Comparador SPED vs SPED":
     st.markdown("""
