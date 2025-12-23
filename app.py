@@ -68,7 +68,6 @@ st.markdown("""
     
     .streamlit-expanderHeader { font-weight: 600; color: #34495E; background-color: #FFFFFF; border: 1px solid #E0E0E0; border-radius: 5px; }
     
-    /* Box Sucesso */
     .file-success {
         background-color: #D5F5E3; color: #196F3D; padding: 10px; border-radius: 5px;
         border: 1px solid #ABEBC6; margin-top: 5px; margin-bottom: 10px; font-weight: 600; text-align: center;
@@ -224,8 +223,7 @@ if tem_dados:
             if not divergentes.empty: st.warning("⚠️ Notas com valor diferente:"); st.dataframe(divergentes)
             if so_xml.empty and divergentes.empty: st.success("✅ Cruzamento XML x SPED 100% Ok!")
 
-    # --- ABA 1: OPORTUNIDADES E RISCOS (A NOVIDADE!) ---
-    # Índice dinâmico para saber onde jogar o conteúdo
+    # --- ABA 1: OPORTUNIDADES E RISCOS ---
     idx_oport = 1 if tem_cruzamento else 0
     idx_dash = 2 if tem_cruzamento else 1
     idx_sim = 3 if tem_cruzamento else 2
@@ -237,11 +235,6 @@ if tem_dados:
         st.caption("Identificação automática de pagamentos indevidos (oportunidades) e passivos ocultos (riscos).")
         
         if not df_final_v.empty:
-            # Lógica: Se Carga Atual > Carga Projetada (e Projetada for baixa/zero), pode ser oportunidade
-            # Vamos focar em: Produto que a regra diz ser Zero/Reduzido mas pagou Cheio
-            
-            # Filtro 1: Oportunidades (Pagou muito, devia pagar pouco)
-            # Simplificação: Consideramos oportunidade se Carga Atual > 0 e a Regra do Motor diz que é Zero/Reduzido
             oportunidades = df_final_v[
                 (df_final_v['Carga Atual'] > 0) & 
                 (df_final_v['Status'].str.contains("ZERO") | df_final_v['Status'].str.contains("REDUZIDA"))
@@ -250,14 +243,12 @@ if tem_dados:
             oportunidades['Potencial Recuperação'] = oportunidades['Carga Atual'] - oportunidades['Carga Projetada']
             total_recup = oportunidades['Potencial Recuperação'].sum()
             
-            # Filtro 2: Riscos (Pagou Zero, devia pagar Cheio)
             riscos = df_final_v[
                 (df_final_v['Carga Atual'] == 0) & 
                 (df_final_v['Status'] == "PADRAO")
             ].copy()
-            total_risco = riscos['Carga Projetada'].sum() # Estimativa do que deveria ter pago
+            total_risco = riscos['Carga Projetada'].sum()
             
-            # KPIs
             c1, c2 = st.columns(2)
             c1.metric("💰 Potencial de Recuperação", f"R$ {total_recup:,.2f}", delta="Crédito Possível", delta_color="normal")
             c2.metric("⚠️ Risco Fiscal Detectado", f"R$ {total_risco:,.2f}", delta="Passivo Oculto", delta_color="inverse")
@@ -266,12 +257,8 @@ if tem_dados:
             
             if not oportunidades.empty:
                 st.success(f"**Encontramos {len(oportunidades)} itens com tributação maior que a necessária:**")
-                st.dataframe(
-                    oportunidades[['Cód. Produto', 'Descrição Produto', 'NCM', 'Carga Atual', 'DescRegra', 'Potencial Recuperação']],
-                    use_container_width=True
-                )
-            else:
-                st.info("Nenhuma oportunidade óbvia de recuperação encontrada (Parabéns, a tributação parece otimizada!)")
+                st.dataframe(oportunidades[['Cód. Produto', 'Descrição Produto', 'NCM', 'Carga Atual', 'DescRegra', 'Potencial Recuperação']], use_container_width=True)
+            else: st.info("Nenhuma oportunidade óbvia de recuperação encontrada.")
                 
             if not riscos.empty:
                 st.error(f"**Atenção: {len(riscos)} itens saíram zerados mas não encontramos base legal para isso:**")
@@ -292,7 +279,8 @@ if tem_dados:
         if not df_final_v.empty:
             st.markdown("#### Top 5 Produtos (Carga Tributária)")
             top = df_final_v.groupby('Produto')['Carga Projetada'].sum().nlargest(5).reset_index().sort_values('Carga Projetada')
-            st.bar_chart(top, x="Carga Projetada", y="Produto", color="#E67E22", horizontal=True)
+            # CORREÇÃO: REMOVIDO 'color=' DO GRAFICO TOP 5 PARA EVITAR ERRO
+            st.bar_chart(top, x="Carga Projetada", y="Produto", horizontal=True)
 
     # --- ABA SIMULAÇÃO ---
     with tabs[idx_sim]:
@@ -339,11 +327,14 @@ if tem_dados:
         with pd.ExcelWriter(buf, engine='openpyxl') as writer:
             if not df_final_v.empty: preparar_exibicao(df_final_v).to_excel(writer, sheet_name="Vendas", index=False)
             if not df_final_c.empty: preparar_exibicao(df_final_c).to_excel(writer, sheet_name="Compras", index=False)
+            
+            # PROTEÇÃO EXTRA PARA EXPORTAR CRUZAMENTO/OPORTUNIDADES
             if tem_cruzamento:
-                if not so_xml.empty: so_xml.to_excel(writer, sheet_name="Omissao_SPED", index=False)
-                if not divergentes.empty: divergentes.to_excel(writer, sheet_name="Divergencia_Valor", index=False)
-            # Exporta Oportunidades
+                if 'so_xml' in locals() and not so_xml.empty: so_xml.to_excel(writer, sheet_name="Omissao_SPED", index=False)
+                if 'divergentes' in locals() and not divergentes.empty: divergentes.to_excel(writer, sheet_name="Divergencia_Valor", index=False)
+            
             if 'oportunidades' in locals() and not oportunidades.empty: oportunidades.to_excel(writer, sheet_name="Recuperacao_Credito", index=False)
+            
         st.download_button("📊 BAIXAR EXCEL COMPLETO", buf, "Auditoria.xlsx", "primary", use_container_width=True)
 
 else:
