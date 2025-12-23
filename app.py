@@ -168,12 +168,11 @@ if modo_app == "📊 Auditoria & Reforma":
 
     with c_xml:
         with st.expander("📄 Carregar XMLs (Notas Fiscais)", expanded=True):
-            # --- LAYOUT MELHORADO ---
             st.markdown("#### 📤 1. XMLs de Saída (Vendas)")
             vendas_files = st.file_uploader("Selecione os XMLs de VENDA", type=['xml'], accept_multiple_files=True, key=f"v_{st.session_state.uploader_key}", label_visibility="collapsed")
             if vendas_files: st.markdown(f'<div class="file-success">✅ {len(vendas_files)} XMLs Venda</div>', unsafe_allow_html=True)
             
-            st.divider() # Linha divisória
+            st.divider()
             
             st.markdown("#### 📥 2. XMLs de Entrada (Compras)")
             compras_files = st.file_uploader("Selecione os XMLs de COMPRA", type=['xml'], accept_multiple_files=True, key=f"c_{st.session_state.uploader_key}", label_visibility="collapsed")
@@ -238,40 +237,50 @@ if modo_app == "📊 Auditoria & Reforma":
         with tabs[idx]:
             st.markdown("### 💎 Análise de Inteligência Fiscal")
             if not df_final_v.empty:
-                op = df_final_v[(df_final_v['Carga Atual']>0) & (df_final_v['Status'].str.contains("ZERO") | df_final_v['Status'].str.contains("REDUZIDA"))].copy()
-                ri = df_final_v[(df_final_v['Carga Atual']==0) & (df_final_v['Status']=="PADRAO")]
-                
-                c1, c2 = st.columns(2)
-                c1.metric("💰 Recuperável", f"R$ {op['Carga Atual'].sum():,.2f}")
-                c2.metric("⚠️ Risco", f"R$ {ri['Carga Projetada'].sum():,.2f}")
-                
-                if not op.empty:
-                    st.success("Itens pagando a mais:")
-                    st.dataframe(op[['Produto', 'NCM', 'Carga Atual', 'DescRegra']])
-                    st.markdown('<div class="correction-box">', unsafe_allow_html=True)
-                    st.markdown("#### 🛠️ Kit de Correção")
-                    df_cor = op[['Cód. Produto', 'Produto', 'NCM', 'DescRegra']].copy()
-                    df_cor.columns = ['COD', 'DESCRICAO', 'NCM_ATUAL', 'REGRA_SUGERIDA']
-                    st.download_button("📥 BAIXAR CSV", convert_df_to_csv(df_cor), "Correcao.csv", "text/csv")
-                    st.markdown('</div>', unsafe_allow_html=True)
+                # Segurança Extra: Verifica se a coluna 'Status' existe antes de filtrar
+                if 'Status' in df_final_v.columns:
+                    op = df_final_v[(df_final_v['Carga Atual']>0) & (df_final_v['Status'].str.contains("ZERO") | df_final_v['Status'].str.contains("REDUZIDA"))].copy()
+                    ri = df_final_v[(df_final_v['Carga Atual']==0) & (df_final_v['Status']=="PADRAO")]
+                    
+                    c1, c2 = st.columns(2)
+                    c1.metric("💰 Recuperável", f"R$ {op['Carga Atual'].sum():,.2f}")
+                    c2.metric("⚠️ Risco", f"R$ {ri['Carga Projetada'].sum():,.2f}")
+                    
+                    if not op.empty:
+                        st.success("Itens pagando a mais:")
+                        st.dataframe(op[['Produto', 'NCM', 'Carga Atual', 'DescRegra']])
+                        st.markdown('<div class="correction-box">', unsafe_allow_html=True)
+                        st.markdown("#### 🛠️ Kit de Correção")
+                        df_cor = op[['Cód. Produto', 'Produto', 'NCM', 'DescRegra']].copy()
+                        df_cor.columns = ['COD', 'DESCRICAO', 'NCM_ATUAL', 'REGRA_SUGERIDA']
+                        st.download_button("📥 BAIXAR CSV", convert_df_to_csv(df_cor), "Correcao.csv", "text/csv")
+                        st.markdown('</div>', unsafe_allow_html=True)
 
-                if not ri.empty: st.error("Itens pagando a menos:"); st.dataframe(ri[['Produto', 'NCM', 'DescRegra']])
+                    if not ri.empty: st.error("Itens pagando a menos:"); st.dataframe(ri[['Produto', 'NCM', 'DescRegra']])
 
         idx += 1
         with tabs[idx]:
             st.markdown("### Visão Geral")
-            d = df_final_v['Carga Projetada'].sum(); c = df_final_c['Carga Projetada'].sum()
+            # --- CORREÇÃO DO ERRO (KEYERROR) ---
+            # Verifica se a coluna existe antes de somar. Se não existir, soma 0.
+            d = df_final_v['Carga Projetada'].sum() if 'Carga Projetada' in df_final_v.columns else 0.0
+            c = df_final_c['Carga Projetada'].sum() if 'Carga Projetada' in df_final_c.columns else 0.0
+            
             k1, k2, k3 = st.columns(3)
             k1.metric("Débitos", f"R$ {d:,.2f}"); k2.metric("Créditos", f"R$ {c:,.2f}"); k3.metric("Saldo", f"R$ {d-c:,.2f}")
             try:
-                top = df_final_v.groupby('Produto')['Carga Projetada'].sum().nlargest(5).reset_index()
-                st.bar_chart(top.set_index('Produto')['Carga Projetada'])
+                # Proteção para o gráfico também
+                if 'Carga Projetada' in df_final_v.columns:
+                    top = df_final_v.groupby('Produto')['Carga Projetada'].sum().nlargest(5).reset_index()
+                    st.bar_chart(top.set_index('Produto')['Carga Projetada'])
             except: pass
 
         idx += 1
         with tabs[idx]:
             st.markdown("### Comparativo")
-            atu = df_final_v['Carga Atual'].sum(); nov = df_final_v['Carga Projetada'].sum()
+            # --- CORREÇÃO AQUI TAMBÉM ---
+            atu = df_final_v['Carga Atual'].sum() if 'Carga Atual' in df_final_v.columns else 0.0
+            nov = df_final_v['Carga Projetada'].sum() if 'Carga Projetada' in df_final_v.columns else 0.0
             try:
                 st.bar_chart(pd.DataFrame({'Cenário':['Atual','Novo'], 'Valor':[float(atu),float(nov)]}).set_index('Cenário')['Valor'])
             except: pass
@@ -281,7 +290,7 @@ if modo_app == "📊 Auditoria & Reforma":
 
 
 # ==============================================================================
-# MODO 2: COMPARADOR SPED VS SPED (BLINDADO)
+# MODO 2: COMPARADOR SPED VS SPED
 # ==============================================================================
 elif modo_app == "⚔️ Comparador SPED vs SPED":
     st.markdown("""
