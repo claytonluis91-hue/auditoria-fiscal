@@ -26,7 +26,7 @@ def init_df(key, columns=None):
         else:
             st.session_state[key] = pd.DataFrame()
 
-# Inicializa DataFrames com colunas essenciais para evitar KeyError
+# Inicializa DataFrames com colunas essenciais
 cols_padrao = ['Chave NFe', 'Valor', 'Produto', 'NCM']
 init_df('xml_vendas_df', cols_padrao)
 init_df('xml_compras_df', cols_padrao)
@@ -91,7 +91,6 @@ with st.sidebar:
     modo_app = st.radio("Modo de Operação", ["📊 Auditoria & Reforma", "⚔️ Comparador SPED vs SPED"], label_visibility="collapsed")
     st.divider()
     
-    # CORREÇÃO AQUI: Inicializa a variável antes dos IFs
     uploaded_tipi = None 
     
     if modo_app == "📊 Auditoria & Reforma":
@@ -115,7 +114,6 @@ with st.sidebar:
         st.rerun()
 
     mapa_lei, df_regras_json = carregar_bases()
-    # Agora uploaded_tipi existe mesmo se for None
     df_tipi = carregar_tipi_cache(uploaded_tipi)
 
 # --- FUNÇÕES ---
@@ -170,10 +168,15 @@ if modo_app == "📊 Auditoria & Reforma":
 
     with c_xml:
         with st.expander("📄 Carregar XMLs (Notas Fiscais)", expanded=True):
-            vendas_files = st.file_uploader("XML Vendas", type=['xml'], accept_multiple_files=True, key=f"v_{st.session_state.uploader_key}", label_visibility="collapsed")
+            # --- LAYOUT MELHORADO ---
+            st.markdown("#### 📤 1. XMLs de Saída (Vendas)")
+            vendas_files = st.file_uploader("Selecione os XMLs de VENDA", type=['xml'], accept_multiple_files=True, key=f"v_{st.session_state.uploader_key}", label_visibility="collapsed")
             if vendas_files: st.markdown(f'<div class="file-success">✅ {len(vendas_files)} XMLs Venda</div>', unsafe_allow_html=True)
             
-            compras_files = st.file_uploader("XML Compras", type=['xml'], accept_multiple_files=True, key=f"c_{st.session_state.uploader_key}", label_visibility="collapsed")
+            st.divider() # Linha divisória
+            
+            st.markdown("#### 📥 2. XMLs de Entrada (Compras)")
+            compras_files = st.file_uploader("Selecione os XMLs de COMPRA", type=['xml'], accept_multiple_files=True, key=f"c_{st.session_state.uploader_key}", label_visibility="collapsed")
             if compras_files: st.markdown(f'<div class="file-success">✅ {len(compras_files)} XMLs Compra</div>', unsafe_allow_html=True)
 
             if vendas_files and st.session_state.xml_vendas_df.empty:
@@ -185,7 +188,8 @@ if modo_app == "📊 Auditoria & Reforma":
 
     with c_sped:
         with st.expander("📝 Carregar SPED Fiscal", expanded=True):
-            sped_file = st.file_uploader("SPED TXT", type=['txt'], accept_multiple_files=False, key=f"s_{st.session_state.uploader_key}", label_visibility="collapsed")
+            st.markdown("#### 📋 Arquivo SPED (TXT)")
+            sped_file = st.file_uploader("Selecione o arquivo TXT do SPED", type=['txt'], accept_multiple_files=False, key=f"s_{st.session_state.uploader_key}", label_visibility="collapsed")
             if sped_file: st.markdown(f'<div class="file-success">✅ SPED Pronto</div>', unsafe_allow_html=True)
             
             if sped_file and st.session_state.sped_vendas_df.empty:
@@ -291,7 +295,7 @@ elif modo_app == "⚔️ Comparador SPED vs SPED":
     
     with col1:
         st.markdown("### 📁 1. SPED Original")
-        file1 = st.file_uploader("Upload SPED Cliente", type=['txt'], key="sped1")
+        file1 = st.file_uploader("Selecione o SPED do Cliente", type=['txt'], key="sped1")
         if not file1:
             st.session_state.sped1_vendas = pd.DataFrame(columns=cols_padrao)
         elif file1 and st.session_state.sped1_vendas.empty:
@@ -303,7 +307,7 @@ elif modo_app == "⚔️ Comparador SPED vs SPED":
                 
     with col2:
         st.markdown("### 💻 2. SPED Gerado")
-        file2 = st.file_uploader("Upload SPED ERP", type=['txt'], key="sped2")
+        file2 = st.file_uploader("Selecione o SPED do ERP", type=['txt'], key="sped2")
         if not file2:
             st.session_state.sped2_vendas = pd.DataFrame(columns=cols_padrao)
         elif file2 and st.session_state.sped2_vendas.empty:
