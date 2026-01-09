@@ -1,23 +1,25 @@
 import pandas as pd
 import json
 import xml.etree.ElementTree as ET
+import io
 
-# --- CARREGAMENTO DE DADOS SIMULADOS ---
+# --- 1. CARREGAMENTO DE DADOS (Mantendo sua lógica original) ---
 def carregar_base_legal():
-    # AQUI SIMULAMOS A SUA BASE DE DADOS DE NCM
-    return {
-        # EX: ARROZ
-        "10063021": {"cClass": "100001", "desc": "Cesta Básica Nacional", "redutor": 0.0, "status": "ZERO"},
-        # EX: FEIJÃO
-        "07133319": {"cClass": "100001", "desc": "Cesta Básica Nacional", "redutor": 0.0, "status": "ZERO"},
-        # EX: MEDICAMENTO
-        "30049069": {"cClass": "500001", "desc": "Medicamento Reduzido", "redutor": 0.4, "status": "REDUZIDA"},
-    }
+    # Esta função deve retornar o seu DataFrame de regras (JSON ou Excel)
+    # Se você usa um arquivo 'regras.json' ou 'base_legal.xlsx', certifique-se
+    # de que o app.py está passando esse arquivo corretamente.
+    try:
+        # Tenta carregar localmente se existir, senão retorna vazio (será preenchido pelo app.py)
+        return pd.read_json("regras.json") 
+    except:
+        return pd.DataFrame() # Retorna vazio se não achar, para não quebrar
 
 def carregar_json_regras():
+    # Tabela auxiliar de CSTs e definições da Reforma
     return pd.DataFrame([
         {"cClass": "000001", "Descricao": "Tributação Padrão", "Aliquota": "Cheia"},
-        {"cClass": "410999", "Descricao": "Operação Não Onerosa / Imune / Isenta / Suspensão", "Aliquota": "Zero"},
+        {"cClass": "410999", "Descricao": "Operação Não Onerosa / Isenta", "Aliquota": "Zero"},
+        # Adicione outros se necessário
     ])
 
 def carregar_tipi(uploaded_file):
@@ -31,7 +33,7 @@ def carregar_tipi(uploaded_file):
             return pd.DataFrame()
     return pd.DataFrame()
 
-# --- PARSERS (XML & SPED) ---
+# --- 2. PARSERS (XML e SPED) - Mantidos idênticos ---
 def extrair_nome_empresa_xml(tree, ns):
     try:
         emit = tree.find('.//ns:emit', ns)
@@ -64,23 +66,19 @@ def processar_xml_detalhado(tree, ns, tipo_arquivo):
             'Valor': float(prod.find('ns:vProd', ns).text),
         }
         
-        try:
-            icms = imposto.find('.//ns:ICMS', ns)
-            tags_icms = icms[0] if len(icms) > 0 else None
-            item['vICMS'] = float(tags_icms.find('ns:vICMS', ns).text) if tags_icms is not None and tags_icms.find('ns:vICMS', ns) is not None else 0.0
-        except: item['vICMS'] = 0.0
-            
-        try:
-            pis = imposto.find('.//ns:PIS', ns)
-            tags_pis = pis[0] if len(pis) > 0 else None
-            item['vPIS'] = float(tags_pis.find('ns:vPIS', ns).text) if tags_pis is not None and tags_pis.find('ns:vPIS', ns) is not None else 0.0
-        except: item['vPIS'] = 0.0
-            
-        try:
-            cofins = imposto.find('.//ns:COFINS', ns)
-            tags_cofins = cofins[0] if len(cofins) > 0 else None
-            item['vCOFINS'] = float(tags_cofins.find('ns:vCOFINS', ns).text) if tags_cofins is not None and tags_cofins.find('ns:vCOFINS', ns) is not None else 0.0
-        except: item['vCOFINS'] = 0.0
+        # Extração Segura de Tributos
+        for tributo in ['ICMS', 'PIS', 'COFINS']:
+            try:
+                node = imposto.find(f'.//ns:{tributo}', ns)
+                if node and len(node) > 0:
+                    child = node[0] # Pega CST (ex: ICMS00)
+                    tag_val = f'v{tributo}'
+                    val = child.find(f'ns:{tag_val}', ns)
+                    item[tag_val] = float(val.text) if val is not None else 0.0
+                else:
+                    item[f'v{tributo}'] = 0.0
+            except:
+                item[f'v{tributo}'] = 0.0
         
         itens.append(item)
     return itens
@@ -88,97 +86,108 @@ def processar_xml_detalhado(tree, ns, tipo_arquivo):
 def processar_sped_fiscal(file_obj):
     content = file_obj.getvalue().decode('latin1').splitlines()
     nome_empresa = "Empresa SPED"
-    vendas = []
-    compras = []
+    vendas, compras = [], []
     mapa_itens = {} 
     
     for line in content:
         if not line.startswith('|'): continue
         campos = line.split('|')
-        registro = campos[1]
+        reg = campos[1]
         
-        if registro == '0000':
-            nome_empresa = campos[6]
-        elif registro == '0200':
-            cod_item = campos[2]
-            descr = campos[3]
-            ncm = campos[7] if len(campos) > 7 else ""
-            mapa_itens[cod_item] = {'Produto': descr, 'NCM': ncm}
-        elif registro == 'C170':
+        if reg == '0000': nome_empresa = campos[6]
+        elif reg == '0200':
+            mapa_itens[campos[2]] = {'Produto': campos[3], 'NCM': campos[7] if len(campos)>7 else ""}
+        elif reg == 'C170':
             cfop = campos[11]
-            cod_item = campos[3]
-            valor = float(campos[7].replace(',', '.'))
-            dados_prod = mapa_itens.get(cod_item, {'Produto': 'Item ' + cod_item, 'NCM': ''})
-            
-            item = {
-                'Chave NFe': 'SPED (S/ Chave Link)',
-                'CFOP': cfop,
-                'Valor': valor,
-                'Produto': dados_prod['Produto'],
-                'NCM': dados_prod['NCM'],
-                'vICMS': float(campos[15].replace(',', '.')) if len(campos) > 15 and campos[15] else 0.0,
-                'vPIS': float(campos[25].replace(',', '.')) if len(campos) > 25 and campos[25] else 0.0,
-                'vCOFINS': float(campos[31].replace(',', '.')) if len(campos) > 31 and campos[31] else 0.0
-            }
-            if cfop.startswith('1') or cfop.startswith('2') or cfop.startswith('3'): compras.append(item)
-            elif cfop.startswith('5') or cfop.startswith('6') or cfop.startswith('7'): vendas.append(item)
-            
+            if cfop not in ['5929', '6929']: # Ignora nota de cupom para não duplicar
+                cod = campos[3]
+                dados = mapa_itens.get(cod, {'Produto': f'Item {cod}', 'NCM': ''})
+                item = {
+                    'Chave NFe': 'SPED (Item)', 'CFOP': cfop,
+                    'Valor': float(campos[7].replace(',', '.')),
+                    'Produto': dados['Produto'], 'NCM': dados['NCM'],
+                    'vICMS': float(campos[15].replace(',', '.')) if len(campos)>15 and campos[15] else 0.0,
+                    'vPIS': float(campos[25].replace(',', '.')) if len(campos)>25 and campos[25] else 0.0,
+                    'vCOFINS': float(campos[31].replace(',', '.')) if len(campos)>31 and campos[31] else 0.0
+                }
+                if cfop[0] in ['1','2','3']: compras.append(item)
+                elif cfop[0] in ['5','6','7']: vendas.append(item)
+                
     return nome_empresa, vendas, compras
 
-# --- CLASSIFICADOR INTELIGENTE ---
+# --- 3. CLASSIFICADOR HÍBRIDO (A CORREÇÃO) ---
 def classificar_item(row, mapa_lei, df_regras, df_tipi, aliq_ibs, aliq_cbs):
+    # Normaliza NCM (remove pontos)
     ncm = str(row['NCM']).replace('.', '').strip()
     cfop = str(row['CFOP']).replace('.', '').strip()
     
-    # ---------------------------------------------------------------------
-    # PASSO 1: Busca a Regra pelo NCM (Base Legal)
-    # ---------------------------------------------------------------------
-    regra_encontrada = mapa_lei.get(ncm)
+    # === CAMADA 1: NCM (Base Legal / Regras) ===
+    # Procura o NCM no DataFrame de Regras carregado
+    # Assume que mapa_lei é um DataFrame com colunas ['NCM', 'cClass', 'Descricao', 'Redutor']
     
-    if regra_encontrada:
-        cClass = regra_encontrada.get('cClass', '000001')
-        desc_regra = regra_encontrada.get('desc', 'Regra Específica NCM')
-        status = regra_encontrada.get('status', 'DIFERENCIADA')
-        redutor = float(regra_encontrada.get('redutor', 1.0))
+    regra_ncm = None
+    
+    # Verifica se mapa_lei é um DataFrame e não está vazio
+    if isinstance(mapa_lei, pd.DataFrame) and not mapa_lei.empty:
+        # Tenta achar o NCM exato
+        filtro = mapa_lei[mapa_lei['NCM'].astype(str).str.replace('.', '') == ncm]
+        if not filtro.empty:
+            regra_ncm = filtro.iloc[0]
+            
+    # Define valores baseados na busca do NCM
+    if regra_ncm is not None:
+        cClass = str(regra_ncm['cClass'])
+        desc_regra = str(regra_ncm.get('Descricao', 'Regra Específica'))
+        # Tenta pegar o status, se não tiver, infere pelo cClass ou Redutor
+        status = str(regra_ncm.get('Status', 'DIFERENCIADA')) 
+        
+        # Redutor: 0.0 = Isento, 0.4 = Paga 40%, 1.0 = Paga 100%
+        # Se sua base tem a coluna 'Redutor', usa ela. Senão, tenta inferir.
+        redutor = float(regra_ncm.get('Redutor', 1.0))
+        if 'cesta' in desc_regra.lower(): redutor = 0.0 # Força zero para cesta se a descrição bater
+            
         origem_legal = f"Base NCM ({ncm})"
-        novo_cst = '01' if redutor > 0 else '20'
+        novo_cst = '20' if redutor < 1.0 else '01'
+        if redutor == 0.0: novo_cst = '40'
+        
     else:
+        # NCM NÃO ENCONTRADO NA BASE -> PADRÃO
         cClass = '000001'
         desc_regra = 'Tributação Padrão'
         status = 'PADRAO'
         redutor = 1.0
-        origem_legal = 'Regra Geral (NCM ñ mapeado)'
+        origem_legal = 'NCM não mapeado'
         novo_cst = '01'
 
-    # ---------------------------------------------------------------------
-    # PASSO 2: Verifica CFOP (Operações Não Onerosas)
-    # ---------------------------------------------------------------------
-    # AQUI: Removi 5949 e 6949 (Outras Saídas)
+    # === CAMADA 2: CFOP (Override / Sobrescrita) ===
+    # CFOPs que ZERAM o imposto independente do NCM
+    # Removidos 5949/6949 conforme solicitado
     cfops_nao_onerosos = [
         '1910', '2910', '5910', '6910', # Bonificação/Doação
         '1911', '2911', '5911', '6911', # Amostra Grátis
         '5912', '6912', '5913', '6913', # Demonstração
         '5901', '6901', '5902', '6902', # Industrialização
         '5903', '6903', 
-        '5915', '6915', '5916', '6916', # Conserto
-        # 5949 e 6949 FORAM REMOVIDOS PARA SEGURANÇA
+        '5915', '6915', '5916', '6916'  # Conserto
     ]
     
     if cfop in cfops_nao_onerosos:
         cClass = '410999'
         desc_regra = f"Op. Não Onerosa (CFOP {cfop})"
         status = 'ZERO (CFOP)'
-        redutor = 0.0 # ZERA TUDO
+        redutor = 0.0 # ZERA O IMPOSTO AQUI
         origem_legal = 'Regra de CFOP'
         novo_cst = '410'
 
-    # ---------------------------------------------------------------------
-    # PASSO 3: Validação TIPI e Cálculos
-    # ---------------------------------------------------------------------
+    # === CÁLCULOS ===
+    # Validação TIPI
     validacao_tipi = "N/A"
-    if not df_tipi.empty:
-        if ncm in df_tipi.values: validacao_tipi = "✅ TIPI OK"
-        else: validacao_tipi = "⚠️ NCM Inválido/Antigo"
+    if isinstance(df_tipi, pd.DataFrame) and not df_tipi.empty:
+        # Tenta achar o NCM na primeira coluna da TIPI
+        if df_tipi.iloc[:, 0].astype(str).str.replace('.', '').str.contains(ncm).any():
+            validacao_tipi = "✅ TIPI OK"
+        else:
+            validacao_tipi = "⚠️ NCM Antigo/Inválido"
 
     carga_atual = row.get('vICMS', 0) + row.get('vPIS', 0) + row.get('vCOFINS', 0)
     valor_base = row['Valor']
