@@ -2,10 +2,19 @@ import pandas as pd
 import json
 import xml.etree.ElementTree as ET
 
-# --- CARREGAMENTO DE DADOS ---
+# --- CARREGAMENTO DE DADOS SIMULADOS (MANTENHA SUA LÓGICA DE BANCO AQUI) ---
 def carregar_base_legal():
+    # AQUI VOCÊ DEVE CONECTAR COM SEU EXCEL/CSV DE REGRAS DE NCM
+    # Estou simulando alguns casos para teste. 
+    # No seu uso real, isso deve vir do arquivo que você carrega no app.py
     return {
-        "00000000": {"regra": "PADRAO", "desc": "Item Genérico"},
+        # EX: ARROZ (Cesta Básica)
+        "10063021": {"cClass": "100001", "desc": "Cesta Básica Nacional", "redutor": 0.0, "status": "ZERO"},
+        # EX: FEIJÃO
+        "07133319": {"cClass": "100001", "desc": "Cesta Básica Nacional", "redutor": 0.0, "status": "ZERO"},
+        # EX: MEDICAMENTO (Reduzida 60% - Paga 40%)
+        "30049069": {"cClass": "500001", "desc": "Medicamento Reduzido", "redutor": 0.4, "status": "REDUZIDA"},
+        # Adicione outros NCMs conforme sua base real
     }
 
 def carregar_json_regras():
@@ -25,7 +34,7 @@ def carregar_tipi(uploaded_file):
             return pd.DataFrame()
     return pd.DataFrame()
 
-# --- PROCESSAMENTO XML (PARSER) ---
+# --- PARSERS (XML & SPED) ---
 def extrair_nome_empresa_xml(tree, ns):
     try:
         emit = tree.find('.//ns:emit', ns)
@@ -58,6 +67,7 @@ def processar_xml_detalhado(tree, ns, tipo_arquivo):
             'Valor': float(prod.find('ns:vProd', ns).text),
         }
         
+        # Extração de Tributos Atuais
         try:
             icms = imposto.find('.//ns:ICMS', ns)
             tags_icms = icms[0] if len(icms) > 0 else None
@@ -77,10 +87,8 @@ def processar_xml_detalhado(tree, ns, tipo_arquivo):
         except: item['vCOFINS'] = 0.0
         
         itens.append(item)
-        
     return itens
 
-# --- PROCESSAMENTO SPED (TXT) ---
 def processar_sped_fiscal(file_obj):
     content = file_obj.getvalue().decode('latin1').splitlines()
     nome_empresa = "Empresa SPED"
@@ -116,79 +124,80 @@ def processar_sped_fiscal(file_obj):
                 'vPIS': float(campos[25].replace(',', '.')) if len(campos) > 25 and campos[25] else 0.0,
                 'vCOFINS': float(campos[31].replace(',', '.')) if len(campos) > 31 and campos[31] else 0.0
             }
+            if cfop.startswith('1') or cfop.startswith('2') or cfop.startswith('3'): compras.append(item)
+            elif cfop.startswith('5') or cfop.startswith('6') or cfop.startswith('7'): vendas.append(item)
             
-            if cfop.startswith('1') or cfop.startswith('2') or cfop.startswith('3'):
-                compras.append(item)
-            elif cfop.startswith('5') or cfop.startswith('6') or cfop.startswith('7'):
-                vendas.append(item)
-
     return nome_empresa, vendas, compras
 
-# --- MOTOR DE REGRAS TRIBUTÁRIAS ---
+# --- CLASSIFICADOR INTELIGENTE (CORRIGIDO) ---
 def classificar_item(row, mapa_lei, df_regras, df_tipi, aliq_ibs, aliq_cbs):
     ncm = str(row['NCM']).replace('.', '').strip()
-    cfop = str(row['CFOP']).strip()
+    cfop = str(row['CFOP']).replace('.', '').strip()
     
-    # -------------------------------------------------------------------------
-    # 1. REGRA DE OURO: CFOP DE OPERAÇÃO NÃO ONEROSA / SUSPENSÃO
-    # -------------------------------------------------------------------------
+    # ---------------------------------------------------------------------
+    # PASSO 1: Busca a Regra pelo NCM (Base Legal)
+    # ---------------------------------------------------------------------
+    # Tenta encontrar o NCM no dicionário de leis.
+    # Se não achar, aplica a regra PADRÃO (Tributado Integral).
+    
+    regra_encontrada = mapa_lei.get(ncm)
+    
+    if regra_encontrada:
+        # Achou NCM na base (Ex: Cesta Básica, Reduzida)
+        cClass = regra_encontrada.get('cClass', '000001')
+        desc_regra = regra_encontrada.get('desc', 'Regra Específica NCM')
+        status = regra_encontrada.get('status', 'DIFERENCIADA')
+        redutor = float(regra_encontrada.get('redutor', 1.0)) # 0.0 = Isento, 0.4 = Paga 40% (Red. 60%)
+        origem_legal = f"Base NCM ({ncm})"
+        novo_cst = '01' if redutor > 0 else '20'
+    else:
+        # NCM não mapeado -> Considera Padrão Full
+        cClass = '000001'
+        desc_regra = 'Tributação Padrão'
+        status = 'PADRAO'
+        redutor = 1.0 # Paga 100%
+        origem_legal = 'Regra Geral (NCM ñ mapeado)'
+        novo_cst = '01'
+
+    # ---------------------------------------------------------------------
+    # PASSO 2: Verifica CFOP (Operações Não Onerosas)
+    # ---------------------------------------------------------------------
+    # Se for operação não onerosa, SOBRESCREVE a regra do NCM.
+    # Ex: Mesmo que seja um iPhone (Tributado), se for Doação (5910), zera.
+    
     cfops_nao_onerosos = [
-        # Bonificações / Doações / Brindes
-        '1910', '2910', '5910', '6910',
-        # Amostra Grátis / Demonstração
-        '1911', '2911', '5911', '6911',
-        '5912', '6912', '5913', '6913',
-        # Industrialização (Remessa e Retorno) - ADICIONADO
-        '5901', '6901', '5902', '6902', 
-        '5903', '6903', # Retorno de mercadoria recebida para industrialização e não aplicada
-        # Conserto / Reparo - ADICIONADO
-        '5915', '6915', '5916', '6916'
+        '1910', '2910', '5910', '6910', # Bonificação/Doação
+        '1911', '2911', '5911', '6911', # Amostra Grátis
+        '5912', '6912', '5913', '6913', # Demonstração
+        '5901', '6901', '5902', '6902', # Industrialização
+        '5903', '6903', 
+        '5915', '6915', '5916', '6916', # Conserto
+        '5949', '6949'                  # Outras saídas (Cuidado, mas geralmente não gera receita)
     ]
     
     if cfop in cfops_nao_onerosos:
-        return [
-            '410999',                       
-            'Operação s/ Incidência (Regra CFOP)',  
-            'ZERO (ISENTO/SUSPENSO)',          
-            '410',                          
-            'CFOP Suspensão/Isenção',             
-            'Ignorado (Regra CFOP)',        
-            0.0,                            
-            0.0,                            
-            0.0,                            
-            0.0                             
-        ]
+        cClass = '410999'
+        desc_regra = f"Op. Não Onerosa (CFOP {cfop})"
+        status = 'ZERO (CFOP)'
+        redutor = 0.0 # ZERA TUDO
+        origem_legal = 'Regra de CFOP'
+        novo_cst = '410'
 
-    # -------------------------------------------------------------------------
-    # 2. FLUXO NORMAL (POR NCM)
-    # -------------------------------------------------------------------------
-    ncms_cesta_basica = ['10063021', '07133319', '04012010'] 
-    
-    if ncm in ncms_cesta_basica:
-        cClass = '100001'
-        desc = 'Cesta Básica Nacional'
-        status = 'ZERO'
-        novo_cst = '20'
-        origem = 'LC 2024 - Cesta Básica'
-        redutor = 0.0
-    else:
-        cClass = '000001'
-        desc = 'Tributação Padrão'
-        status = 'PADRAO'
-        novo_cst = '01'
-        origem = 'Regra Geral'
-        redutor = 1.0 
-    
+    # ---------------------------------------------------------------------
+    # PASSO 3: Validação TIPI e Cálculos
+    # ---------------------------------------------------------------------
     validacao_tipi = "N/A"
     if not df_tipi.empty:
-        if ncm in df_tipi.values: validacao_tipi = "✅ NCM Existe na TIPI"
-        else: validacao_tipi = "⚠️ NCM Não Encontrado"
+        if ncm in df_tipi.values: validacao_tipi = "✅ TIPI OK"
+        else: validacao_tipi = "⚠️ NCM Inválido/Antigo"
 
+    # Cálculos Finais
     carga_atual = row.get('vICMS', 0) + row.get('vPIS', 0) + row.get('vCOFINS', 0)
-    
     valor_base = row['Valor']
+    
+    # Aplica o redutor definido no Passo 1 ou Passo 2
     v_ibs = valor_base * aliq_ibs * redutor
     v_cbs = valor_base * aliq_cbs * redutor
     carga_projetada = v_ibs + v_cbs
     
-    return [cClass, desc, status, novo_cst, origem, validacao_tipi, carga_atual, carga_projetada, v_ibs, v_cbs]
+    return [cClass, desc_regra, status, novo_cst, origem_legal, validacao_tipi, carga_atual, carga_projetada, v_ibs, v_cbs]
