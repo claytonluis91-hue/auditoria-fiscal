@@ -10,6 +10,7 @@ import io
 MAPA_CST_CORRETO = {
     "200003": "200", "200004": "200", "200005": "200", 
     "200009": "200", "200010": "200", "200014": "200",
+    "200022": "200", # ADICIONADO ZFM
     "200030": "200", "200032": "200", "200034": "200", "200035": "200",
     "000001": "000", "410004": "410", 
     "000002": "000", "000003": "000", "010001": "010", "011001": "011",
@@ -17,7 +18,6 @@ MAPA_CST_CORRETO = {
 }
 
 # --- 2. DADOS E REGRAS (TEXTO MESTRA) ---
-# MANTIDA A SUA BASE ORIGINAL PARA NÃO PERDER A CESTA BÁSICA
 TEXTO_MESTRA = """
 ANEXO I (ZERO)
 1006.20 1006.30 1006.40.00 0401.10.10 0401.10.90 0401.20.10 0401.20.90 0401.40.10 0401.50.10
@@ -128,7 +128,6 @@ def obter_cst_final(c_class_trib, df_json):
                 return str(match.iloc[0][col_cst]).strip()
     return '000'
 
-# --- AQUI ESTÁ A GRANDE MUDANÇA: Lógica Híbrida ---
 def classificar_item(row, mapa_regras, df_json, df_tipi, aliq_ibs, aliq_cbs):
     ncm = str(row['NCM']).replace('.', '')
     # Garante que CFOP tenha apenas números para comparação
@@ -157,18 +156,22 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliq_ibs, aliq_cbs):
         if ncm in df_tipi.index: validacao = "✅ NCM Válido"
         elif ncm[:4] in df_tipi.index: validacao = "✅ Posição Válida"
 
-    # --- LISTA DE CFOPs DE EXCEÇÃO (Bonificação, Amostra, Conserto) ---
-    # Adicionados os códigos solicitados: 5901/02 (Industrialização), 5915/16 (Conserto)
-    # E os padrões de Doação/Brinde (5910, 1910, etc)
+    # --- LISTA DE CFOPs ESPECIAIS ---
+    
+    # 1. ZONA FRANCA DE MANAUS (Vendas Incentivadas)
+    # 5109/6109 = Venda de produção, 5110/6110 = Venda de mercadoria
+    cfops_zfm = ['5109', '6109', '5110', '6110']
+
+    # 2. OPERAÇÕES NÃO ONEROSAS / SUSPENSÃO
     cfops_excecao = [
-        '1910', '2910', '5910', '6910', # Bonificação, doação ou brinde
-        '1911', '2911', '5911', '6911', # Amostra grátis
+        '1910', '2910', '5910', '6910', # Bonificação/Doação
+        '1911', '2911', '5911', '6911', # Amostra Grátis
         '5912', '6912', '5913', '6913', # Demonstração
         '5901', '6901', '5902', '6902', # Industrialização
         '5915', '6915', '5916', '6916'  # Conserto / Reparo
     ]
 
-    # --- VARIÁVEIS DE RESULTADO PADRÃO (Antes de apurar) ---
+    # --- VARIÁVEIS DE RESULTADO PADRÃO ---
     cClassTrib = '000001'
     desc_final = 'Padrão - Tributação Integral'
     status_final = 'PADRAO'
@@ -180,7 +183,6 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliq_ibs, aliq_cbs):
     # --- PASSO 1: CLASSIFICAÇÃO PELO NCM (Base Legal / Texto Mestra) ---
     anexo_encontrado = None
     
-    # Busca NCM na lista de regras (Ex: Cesta Básica)
     for tent in [ncm, ncm[:6], ncm[:4], ncm[:2]]:
         if tent in mapa_regras:
             anexo_encontrado = mapa_regras[tent]
@@ -188,45 +190,54 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliq_ibs, aliq_cbs):
             break
             
     if anexo_encontrado:
-        # Se achou regra (Ex: Anexo I - Cesta Básica)
         regra = CONFIG_ANEXOS[anexo_encontrado]
         cClassTrib = regra['cClassTrib']
         desc_final = regra['Descricao']
         status_final = regra['Status']
         
-        fator = regra.get('Reducao', 0.0) # 1.0 = Redução Total (Zero), 0.6 = Redução 60%
+        fator = regra.get('Reducao', 0.0)
         
-        # Recalcula imposto com a redução do NCM
         v_ibs_final = ibs_padrao * (1 - fator)
         v_cbs_final = cbs_padrao * (1 - fator)
-        
         cst_final = obter_cst_final(cClassTrib, df_json)
     
     else:
-        # Se não achou na lista Mestra, tenta JSON ou mantém padrão
         if ncm != 'SEM_DETALHE' and not df_json.empty and 'Busca' in df_json.columns:
-            # Lógica simples de fallback
+            # Fallback para medicamentos/cesta se não estiver no Mestra
             pass
 
-    # --- PASSO 2: SOBRESCRITA PELO CFOP (A "Regra de Ouro") ---
-    if cfop in cfops_excecao:
+    # --- PASSO 2: CAMADA ZONA FRANCA DE MANAUS (Prioridade Alta) ---
+    if cfop in cfops_zfm:
+        cClassTrib = '200022' # Venda originada fora da ZFM para ZFM (CST 200 - Redução 100%)
+        desc_final = f"Venda Incentivada ZFM/ALC (CFOP {cfop})"
+        status_final = 'REDUZIDA 100% (ZFM)'
+        cst_final = '200' 
+        origem_final = "Regra ZFM (Lei Comp. 214/2025)"
+        v_ibs_final = 0.0 # Redução de 100%
+        v_cbs_final = 0.0
+
+    # --- PASSO 3: CAMADA NÃO ONEROSA / SUSPENSÃO (Prioridade Máxima para zerar) ---
+    elif cfop in cfops_excecao:
         cClassTrib = '410999'
         desc_final = f"Op. Não Onerosa / Suspensão (CFOP {cfop})"
         status_final = 'ZERO (CFOP)'
-        cst_final = '410' # CST para Não Tributado
+        cst_final = '410' 
         origem_final = "Regra de CFOP"
         v_ibs_final = 0.0
         v_cbs_final = 0.0
     
-    # Casos especiais de Comércio Exterior (Mantendo lógica original)
+    # Comércio Exterior
     if cfop.startswith('7') or cfop.startswith('3'): 
         return '410004', 'Comércio Exterior', 'IMUNE/SUSPENSO', obter_cst_final("410004", df_json), 'CFOP', validacao, 0.0, 0.0, 0.0, 0.0
 
-    # CRÉDITO DE ENTRADA (Uso e Consumo)
+    # Uso e Consumo (Entrada)
     cfop_base = cfop[1:]
     eh_uso_consumo = cfop_base in ['556', '407', '551', '406']
     if tipo_op == 'ENTRADA' and eh_uso_consumo:
          return '000001', 'Crédito de Uso/Consumo ou Ativo', 'CREDITO PERMITIDO', '000', f'CFOP {cfop}', validacao, 0.0, ibs_padrao+cbs_padrao, ibs_padrao, cbs_padrao
+
+    if verificar_seletivo(ncm):
+        return '000001', 'Produto sujeito a Seletivo', 'ALERTA SELETIVO', '002', 'Trava', validacao, imposto_atual, v_ibs_final+v_cbs_final, v_ibs_final, v_cbs_final
 
     imposto_futuro = v_ibs_final + v_cbs_final
     return cClassTrib, desc_final, status_final, cst_final, origem_final, validacao, imposto_atual, imposto_futuro, v_ibs_final, v_cbs_final
