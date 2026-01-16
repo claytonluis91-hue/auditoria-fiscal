@@ -81,21 +81,39 @@ def carregar_bases(): return motor.carregar_base_legal(), motor.carregar_json_re
 @st.cache_data
 def carregar_tipi_cache(file): return motor.carregar_tipi(file)
 
-# --- FUNÇÃO AUXILIAR: BUSCAR DESCRIÇÃO TIPI ---
+# --- FUNÇÃO AUXILIAR: BUSCAR DESCRIÇÃO TIPI (CORRIGIDA) ---
 def buscar_descricao_tipi(ncm, df_tipi):
     if df_tipi.empty: return "TIPI não carregada"
     ncm_limpo = str(ncm).replace('.', '').strip()
     
-    # Tenta busca exata no índice
-    if ncm_limpo in df_tipi.index:
-        # Pega a primeira coluna (assumindo que é a descrição)
-        return str(df_tipi.loc[ncm_limpo].iloc[0])
+    try:
+        # Tenta busca exata no índice
+        if ncm_limpo in df_tipi.index:
+            row = df_tipi.loc[ncm_limpo]
+            
+            # Lógica para pegar a Coluna 2 (Descrição) se existir
+            # Se for DataFrame (duplicidade) ou Series (único)
+            if isinstance(row, pd.DataFrame):
+                # Se tiver mais de uma coluna, pega a segunda (índice 1)
+                return str(row.iloc[0, 1]) if row.shape[1] > 1 else str(row.iloc[0, 0])
+            else:
+                # Se for Series
+                return str(row.iloc[1]) if len(row) > 1 else str(row.iloc[0])
     
-    # Tenta busca por prefixo (Ex: NCM de 8 dígitos buscando a posição de 4)
-    if len(ncm_limpo) == 8:
-        posicao = ncm_limpo[:4]
-        if posicao in df_tipi.index:
-            return f"[Posição {posicao}] " + str(df_tipi.loc[posicao].iloc[0])
+        # Tenta busca por prefixo (Ex: NCM de 8 dígitos buscando a posição de 4)
+        if len(ncm_limpo) >= 4:
+            posicao = ncm_limpo[:4]
+            if posicao in df_tipi.index:
+                row = df_tipi.loc[posicao]
+                desc = ""
+                if isinstance(row, pd.DataFrame):
+                    desc = str(row.iloc[0, 1]) if row.shape[1] > 1 else str(row.iloc[0, 0])
+                else:
+                    desc = str(row.iloc[1]) if len(row) > 1 else str(row.iloc[0])
+                return f"[Posição {posicao}] {desc}"
+            
+    except:
+        return "Erro ao ler descrição"
             
     return "Descrição não encontrada na TIPI"
 
@@ -432,7 +450,6 @@ elif modo_app == "🔍 Consultor de Classificação":
                     row_simulada, mapa_lei, df_regras_json, df_tipi, 
                     aliq_ibs/100, aliq_cbs/100
                 )
-                # O motor retorna uma lista: [cClass, Desc, Status, CST, Origem, Validacao, ...]
                 cClass, desc_regra, status, novo_cst, origem_legal = resultado[0], resultado[1], resultado[2], resultado[3], resultado[4]
                 
                 # 4. Exibe Resultado Bonito
