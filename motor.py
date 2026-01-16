@@ -28,7 +28,6 @@ MAPA_CST_CORRETO = {
 }
 
 # --- 2. CONFIGURAÇÃO TRIBUTÁRIA E DADOS ---
-# (Mantendo TEXTO_MESTRA e CONFIG_ANEXOS originais para brevidade, mas eles continuam valendo)
 TEXTO_MESTRA = """
 ANEXO I (ZERO)
 1006.20 1006.30 1006.40.00 0401.10.10 0401.10.90 0401.20.10 0401.20.90 0401.40.10 0401.50.10
@@ -174,13 +173,9 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliq_ibs, aliq_cbs):
     # Suspensão / Industrialização / Conserto
     cfops_suspensao = ['5901', '6901', '5902', '6902', '5915', '6915', '5916', '6916']
     
-    # ZFM (Vendas Incentivadas - CST 200)
+    # ZFM / ALC (Vendas Incentivadas - CST 200)
     cfops_zfm = ['5109', '6109', '5110', '6110']
     
-    # Áreas de Livre Comércio (ALC) - Diferente de ZFM no JSON (CST 550)
-    # *Nota: Geralmente usa-se os mesmos CFOPs de ZFM, mas depende do cadastro do cliente se é ALC ou ZFM.
-    # Por padrão, vamos priorizar ZFM (mais comum), mas se houver indicador de ALC, mudaria.
-
     # Comércio Exterior
     cfops_export = ['7101', '7102', '7127', '7501', '7930', '7949'] 
 
@@ -213,11 +208,12 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliq_ibs, aliq_cbs):
 
     # --- PASSO 2: REGRA DA OPERAÇÃO (CFOP) - SOBRESCRITA ---
     
-    # 2.1 ZONA FRANCA DE MANAUS (Incentivada)
+    # 2.1 ZONA FRANCA DE MANAUS (Incentivada) + ALERTA ALC
     if cfop in cfops_zfm:
-        cClassTrib = '200022' # Conforme JSON: Op. originada fora da ZFM
-        desc_final = f"Venda ZFM (Lei Comp. 214/2025)"
-        status_final = 'REDUZIDA 100% (ZFM)'
+        cClassTrib = '200022' 
+        desc_final = f"Venda Incentivada ZFM (Lei Comp. 214/2025)"
+        # --- AQUI ESTÁ A MUDANÇA SOLICITADA ---
+        status_final = 'REDUZIDA 100% (ZFM) *Se ALC: Usar CST 550 / cClass 550020' 
         cst_final = '200' 
         origem_final = "Regra ZFM/JSON"
         v_ibs_final = 0.0
@@ -255,14 +251,11 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliq_ibs, aliq_cbs):
 
     # 2.5 SUSPENSÃO (Conserto, Industrialização)
     elif cfop in cfops_suspensao:
-        # JSON sugere códigos 550xxx para suspensões específicas (Ex: 550007 para Aperfeiçoamento)
-        # Se for conserto simples, mantemos a lógica de 'Não Oneroso' ou 'Suspensão Genérica'
-        # Vamos usar 410999 por segurança ou 550007 se for industrialização.
-        # Simplificação: Zerar tributo.
+        # JSON sugere códigos 550xxx para suspensões específicas
         cClassTrib = '410999' 
         desc_final = f"Suspensão/Retorno (CFOP {cfop})"
         status_final = 'ZERO (Suspensão)'
-        cst_final = '410' # Poderia ser 550 se fosse específico do regime especial
+        cst_final = '410' 
         origem_final = "Regra CFOP"
         v_ibs_final = 0.0
         v_cbs_final = 0.0
@@ -281,7 +274,6 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliq_ibs, aliq_cbs):
     return cClassTrib, desc_final, status_final, cst_final, origem_final, validacao, imposto_atual, imposto_futuro, v_ibs_final, v_cbs_final
 
 # Funções auxiliares de XML/SPED mantidas (extrair_nome_empresa_xml, processar_xml_detalhado, etc.)
-# ... (Mantenha o restante do código igual ao arquivo anterior)
 def extrair_nome_empresa_xml(tree, ns):
     root = tree.getroot()
     emit = root.find('.//ns:emit', ns)
