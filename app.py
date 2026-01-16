@@ -81,6 +81,24 @@ def carregar_bases(): return motor.carregar_base_legal(), motor.carregar_json_re
 @st.cache_data
 def carregar_tipi_cache(file): return motor.carregar_tipi(file)
 
+# --- FUNÇÃO AUXILIAR: BUSCAR DESCRIÇÃO TIPI ---
+def buscar_descricao_tipi(ncm, df_tipi):
+    if df_tipi.empty: return "TIPI não carregada"
+    ncm_limpo = str(ncm).replace('.', '').strip()
+    
+    # Tenta busca exata no índice
+    if ncm_limpo in df_tipi.index:
+        # Pega a primeira coluna (assumindo que é a descrição)
+        return str(df_tipi.loc[ncm_limpo].iloc[0])
+    
+    # Tenta busca por prefixo (Ex: NCM de 8 dígitos buscando a posição de 4)
+    if len(ncm_limpo) == 8:
+        posicao = ncm_limpo[:4]
+        if posicao in df_tipi.index:
+            return f"[Posição {posicao}] " + str(df_tipi.loc[posicao].iloc[0])
+            
+    return "Descrição não encontrada na TIPI"
+
 # --- SIDEBAR ---
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/2910/2910768.png", width=70)
@@ -88,23 +106,27 @@ with st.sidebar:
     st.markdown("### Selecione o Modo:")
     modo_app = st.radio(
         "Modo de Operação", 
-        ["📊 Auditoria & Reforma", "⚔️ Comparador SPED vs SPED"], 
+        ["📊 Auditoria & Reforma", "⚔️ Comparador SPED vs SPED", "🔍 Consultor de Classificação"], 
         label_visibility="collapsed"
     )
     st.divider()
     
     uploaded_tipi = None 
     
-    if modo_app == "📊 Auditoria & Reforma":
-        if st.session_state.empresa_nome != "Nenhuma Empresa":
+    # Parâmetros visíveis em todos os modos que usam motor de cálculo
+    if modo_app in ["📊 Auditoria & Reforma", "🔍 Consultor de Classificação"]:
+        if st.session_state.empresa_nome != "Nenhuma Empresa" and modo_app == "📊 Auditoria & Reforma":
             st.success(f"🏢 {st.session_state.empresa_nome}")
+            
         c1, c2 = st.columns(2)
         with c1: aliq_ibs = st.number_input("IBS (%)", 0.0, 50.0, 17.7, 0.1)
         with c2: aliq_cbs = st.number_input("CBS (%)", 0.0, 50.0, 8.8, 0.1)
+        
         with st.expander("📂 Atualizar TIPI"):
             uploaded_tipi = st.file_uploader("TIPI", type=['xlsx', 'csv'])
             if st.button("🔄 Recarregar"):
                 carregar_bases.clear()
+                carregar_tipi_cache.clear()
                 st.rerun()
                 
     elif modo_app == "⚔️ Comparador SPED vs SPED":
@@ -150,6 +172,12 @@ def preparar_exibicao(df):
     if 'Produto' in df.columns:
         return df.rename(columns={'Produto': 'Descrição Produto'})[cols_existentes]
     return df[cols_existentes]
+
+def converter_df_para_excel(df):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Resultado')
+    return output.getvalue()
 
 # ==============================================================================
 # MODO 1: AUDITORIA & REFORMA
@@ -215,7 +243,6 @@ if modo_app == "📊 Auditoria & Reforma":
             
         tabs = st.tabs(abas)
         
-        # 1. CRUZAMENTO
         if tem_cruzamento:
             with tabs[abas.index("⚔️ Cruzamento XML x SPED")]:
                 st.markdown("### ⚔️ Auditoria Cruzada")
@@ -233,17 +260,14 @@ if modo_app == "📊 Auditoria & Reforma":
                 if not so_xml.empty: st.error("🚨 Notas fora do SPED:"); st.dataframe(so_xml)
                 if not div.empty: st.warning("⚠️ Valores divergentes:"); st.dataframe(div)
 
-        # 2. SAÍDAS
         with tabs[abas.index("📤 Saídas")]:
             if not df_final_v.empty: st.dataframe(preparar_exibicao(df_final_v), use_container_width=True)
             else: st.info("Sem dados de Saída.")
 
-        # 3. ENTRADAS
         with tabs[abas.index("📥 Entradas")]:
             if not df_final_c.empty: st.dataframe(preparar_exibicao(df_final_c), use_container_width=True)
             else: st.info("Sem dados de Entrada.")
 
-        # 4. SIMULAÇÃO
         with tabs[abas.index("⚖️ Simulação")]:
             st.markdown("### Comparativo")
             atu = df_final_v['Carga Atual'].sum() if 'Carga Atual' in df_final_v.columns else 0.0
@@ -259,7 +283,6 @@ if modo_app == "📊 Auditoria & Reforma":
                 st.bar_chart(pd.DataFrame({'Cenário':['Atual','Novo'], 'Valor':[float(atu),float(nov)]}).set_index('Cenário')['Valor'])
             except: st.warning("Gráfico indisponível.")
 
-        # 5. DASHBOARD
         with tabs[abas.index("📊 Dashboard")]:
             st.markdown("### Visão Geral")
             d = df_final_v['Carga Projetada'].sum() if 'Carga Projetada' in df_final_v.columns else 0.0
@@ -272,7 +295,6 @@ if modo_app == "📊 Auditoria & Reforma":
                     st.bar_chart(top.set_index('Produto')['Carga Projetada'])
             except: pass
 
-        # EXPORTAÇÃO
         st.markdown("---")
         st.markdown("### 📥 Exportar Relatórios")
         c1, c2 = st.columns(2)
@@ -365,3 +387,146 @@ elif modo_app == "⚔️ Comparador SPED vs SPED":
                 st.warning("⚠️ Arquivos carregados, mas não contêm dados de venda válidos.")
     except Exception as e:
         st.info("Aguardando arquivos válidos para comparação...")
+
+# ==============================================================================
+# MODO 3: CONSULTOR DE CLASSIFICAÇÃO (NOVO!)
+# ==============================================================================
+elif modo_app == "🔍 Consultor de Classificação":
+    st.markdown("""
+    <div class="header-container">
+        <div class="main-header">Consultor Inteligente</div>
+        <div class="sub-header">Pesquisa de CST e cClassTrib por NCM e Operação</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    tab1, tab2 = st.tabs(["🔍 Consulta Rápida (Individual)", "📂 Processamento em Lote (Excel)"])
+
+    # --- TAB 1: CONSULTA INDIVIDUAL ---
+    with tab1:
+        st.markdown("#### Simular Classificação de Item")
+        
+        c1, c2 = st.columns([1, 1])
+        with c1:
+            ncm_input = st.text_input("NCM do Produto:", placeholder="Ex: 1006.30.21", max_chars=10)
+        with c2:
+            cfop_input = st.text_input("CFOP da Operação:", value="5102", placeholder="Ex: 5102, 5910", max_chars=4, help="Se vazio, assume venda padrão.")
+
+        if st.button("🔍 Consultar Regra", type="primary"):
+            if ncm_input:
+                # Normaliza entrada
+                ncm_limpo = ncm_input.replace('.', '').strip()
+                
+                # 1. Busca Descrição na TIPI
+                desc_tipi = buscar_descricao_tipi(ncm_limpo, df_tipi)
+                
+                # 2. Monta linha simulada para o motor
+                row_simulada = {
+                    'NCM': ncm_limpo,
+                    'CFOP': cfop_input if cfop_input else '5102',
+                    'Valor': 100.00, # Valor fictício para ativar o cálculo
+                    'vICMS': 0, 'vPIS': 0, 'vCOFINS': 0
+                }
+                
+                # 3. Chama o Motor de Regras (O mesmo da Auditoria)
+                resultado = motor.classificar_item(
+                    row_simulada, mapa_lei, df_regras_json, df_tipi, 
+                    aliq_ibs/100, aliq_cbs/100
+                )
+                # O motor retorna uma lista: [cClass, Desc, Status, CST, Origem, Validacao, ...]
+                cClass, desc_regra, status, novo_cst, origem_legal = resultado[0], resultado[1], resultado[2], resultado[3], resultado[4]
+                
+                # 4. Exibe Resultado Bonito
+                st.markdown("---")
+                st.markdown(f"### Resultado para NCM **{ncm_input}**")
+                st.caption(f"Operação: CFOP {row_simulada['CFOP']}")
+                
+                k1, k2, k3 = st.columns(3)
+                k1.metric("Novo CST", novo_cst)
+                k2.metric("cClassTrib", cClass)
+                k3.metric("Status", status, delta="Isento" if status.startswith("ZERO") else "Tributado", delta_color="off")
+                
+                st.info(f"📋 **Descrição TIPI:** {desc_tipi}")
+                st.success(f"⚖️ **Regra Aplicada:** {desc_regra}")
+                st.caption(f"Fonte da Regra: {origem_legal}")
+                
+            else:
+                st.warning("Digite um NCM para pesquisar.")
+
+    # --- TAB 2: CONSULTA EM LOTE ---
+    with tab2:
+        st.markdown("#### Saneamento de Cadastro (Upload Excel)")
+        st.info("Suba um arquivo Excel contendo as colunas **NCM** e **CFOP** (opcional).")
+        
+        uploaded_lote = st.file_uploader("Selecione sua planilha", type=['xlsx', 'csv'])
+        
+        if uploaded_lote:
+            try:
+                # Lê o arquivo
+                if uploaded_lote.name.endswith('.csv'):
+                    df_lote = pd.read_csv(uploaded_lote, sep=';', dtype=str)
+                else:
+                    df_lote = pd.read_excel(uploaded_lote, dtype=str)
+                
+                # Verifica colunas necessárias
+                col_ncm = None
+                col_cfop = None
+                
+                # Tenta achar a coluna NCM (flexível com maiúsculas/minúsculas)
+                for col in df_lote.columns:
+                    if 'ncm' in col.lower(): col_ncm = col
+                    if 'cfop' in col.lower(): col_cfop = col
+                
+                if col_ncm:
+                    st.success(f"Processando {len(df_lote)} linhas...")
+                    
+                    # Prepara DataFrame de Resultado
+                    resultados_lote = []
+                    
+                    # Barra de progresso
+                    prog_bar = st.progress(0)
+                    total = len(df_lote)
+                    
+                    for idx, row in df_lote.iterrows():
+                        ncm_val = str(row[col_ncm])
+                        cfop_val = str(row[col_cfop]) if col_cfop else "5102"
+                        
+                        # Simula linha para o motor
+                        row_sim = {'NCM': ncm_val, 'CFOP': cfop_val, 'Valor': 100.0, 'vICMS':0, 'vPIS':0, 'vCOFINS':0}
+                        
+                        # Chama Motor
+                        res = motor.classificar_item(row_sim, mapa_lei, df_regras_json, df_tipi, aliq_ibs/100, aliq_cbs/100)
+                        
+                        # Busca Descrição TIPI
+                        desc_tipi = buscar_descricao_tipi(ncm_val, df_tipi)
+                        
+                        resultados_lote.append({
+                            'NCM Original': ncm_val,
+                            'CFOP': cfop_val,
+                            'Descrição TIPI': desc_tipi,
+                            'Novo CST': res[3],
+                            'cClassTrib': res[0],
+                            'Regra Aplicada': res[1],
+                            'Status Tributário': res[2]
+                        })
+                        
+                        if idx % 10 == 0: prog_bar.progress((idx + 1) / total)
+                    
+                    prog_bar.empty()
+                    df_resultado = pd.DataFrame(resultados_lote)
+                    
+                    st.dataframe(df_resultado)
+                    
+                    # Botão Download
+                    csv = df_resultado.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
+                    st.download_button(
+                        "📥 Baixar Resultado (CSV)",
+                        csv,
+                        "Resultado_Classificacao.csv",
+                        "text/csv"
+                    )
+                    
+                else:
+                    st.error("Não encontrei a coluna 'NCM' no seu arquivo. Verifique o cabeçalho.")
+                    
+            except Exception as e:
+                st.error(f"Erro ao processar arquivo: {e}")
