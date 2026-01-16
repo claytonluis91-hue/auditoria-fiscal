@@ -117,6 +117,21 @@ def buscar_descricao_tipi(ncm, df_tipi):
     except:
         return "Erro ao ler descrição"
 
+# --- FUNÇÃO PARA GERAR MODELO EXCEL ---
+def gerar_modelo_excel():
+    # Cria um DataFrame de exemplo
+    df_modelo = pd.DataFrame({
+        'NCM': ['1006.30.21', '3004.90.69', '2202.10.00'],
+        'CFOP': ['5102', '5405', '5102'],
+        'Descricao_Interna': ['Arroz (Exemplo)', 'Medicamento (Exemplo)', 'Refrigerante (Exemplo)']
+    })
+    
+    # Converte para BytesIO (arquivo em memória)
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df_modelo.to_excel(writer, index=False, sheet_name='Modelo_Importacao')
+    return output.getvalue()
+
 # --- SIDEBAR ---
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/2910/2910768.png", width=70)
@@ -189,6 +204,12 @@ def preparar_exibicao(df):
     if 'Produto' in df.columns:
         return df.rename(columns={'Produto': 'Descrição Produto'})[cols_existentes]
     return df[cols_existentes]
+
+def converter_df_para_excel(df):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Resultado')
+    return output.getvalue()
 
 # ==============================================================================
 # MODO 1: AUDITORIA & REFORMA
@@ -324,6 +345,7 @@ if modo_app == "📊 Auditoria & Reforma":
                     if 'so_xml' in locals() and not so_xml.empty: so_xml.to_excel(writer, sheet_name="Omissao_SPED", index=False)
                     if 'div' in locals() and not div.empty: div.to_excel(writer, sheet_name="Divergencia_Valor", index=False)
             st.download_button("📊 BAIXAR EXCEL", buf, "Auditoria_Dados.xlsx", "primary", use_container_width=True)
+
 
 # ==============================================================================
 # MODO 2: COMPARADOR SPED VS SPED
@@ -464,9 +486,20 @@ elif modo_app == "🔍 Consultor de Classificação":
     # --- TAB 2: CONSULTA EM LOTE ---
     with tab2:
         st.markdown("#### Saneamento de Cadastro (Upload Excel)")
-        st.info("Suba um arquivo Excel contendo as colunas **NCM** e **CFOP** (opcional).")
+        st.info("ℹ️ Baixe o modelo, preencha com seus produtos e faça o upload para classificar em massa.")
         
-        uploaded_lote = st.file_uploader("Selecione sua planilha", type=['xlsx', 'csv'])
+        # --- BOTÃO DE DOWNLOAD DO MODELO (NOVO!) ---
+        c_down, c_up = st.columns([1, 2])
+        with c_down:
+            st.download_button(
+                label="📥 Baixar Planilha Modelo",
+                data=gerar_modelo_excel(),
+                file_name="Modelo_Classificacao_NCM.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                help="Clique para baixar o arquivo Excel padrão para preenchimento."
+            )
+        
+        uploaded_lote = st.file_uploader("Selecione sua planilha preenchida", type=['xlsx', 'csv'])
         
         if uploaded_lote:
             try:
