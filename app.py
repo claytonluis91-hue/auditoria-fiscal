@@ -63,6 +63,15 @@ st.markdown("""
     .main-header { font-size: 2.2rem; font-weight: 800; color: #FFFFFF; margin: 0; letter-spacing: -1px; }
     .sub-header { font-size: 1rem; color: #FDEBD0; margin-top: 5px; opacity: 0.9; }
     
+    /* Ajuste para cards de resultado */
+    .result-card {
+        background-color: white; padding: 20px; border-radius: 10px;
+        border: 1px solid #E0E0E0; box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        margin-bottom: 15px;
+    }
+    .result-title { font-size: 0.9rem; color: #7F8C8D; font-weight: 600; margin-bottom: 5px; }
+    .result-value { font-size: 1.3rem; color: #2C3E50; font-weight: 700; }
+    
     div[data-testid="stMetric"] { 
         background-color: #FFFFFF !important; border: 1px solid #E0E0E0; 
         border-radius: 10px; padding: 15px; box-shadow: 0 2px 5px rgba(0,0,0,0.05);
@@ -81,52 +90,39 @@ def carregar_bases(): return motor.carregar_base_legal(), motor.carregar_json_re
 @st.cache_data
 def carregar_tipi_cache(file): return motor.carregar_tipi(file)
 
-# --- FUNÇÃO AUXILIAR: BUSCAR DESCRIÇÃO TIPI (CORREÇÃO NAN) ---
+# --- FUNÇÃO AUXILIAR: BUSCAR DESCRIÇÃO TIPI ---
 def buscar_descricao_tipi(ncm, df_tipi):
     if df_tipi.empty: return "TIPI não carregada"
     ncm_limpo = str(ncm).replace('.', '').strip()
     
     try:
         resultado = None
-        # Tenta busca exata no índice
         if ncm_limpo in df_tipi.index:
             row = df_tipi.loc[ncm_limpo]
-            # Pega a primeira coluna disponível se for DataFrame ou Series
-            if isinstance(row, pd.DataFrame):
-                resultado = row.iloc[0, 0] # Pega a primeira coluna da primeira linha
-            else:
-                resultado = row.iloc[0] # Pega o primeiro valor da Series
+            if isinstance(row, pd.DataFrame): resultado = row.iloc[0, 0]
+            else: resultado = row.iloc[0]
         
-        # Tenta busca por prefixo (Ex: 8 dígitos buscando posição de 4)
         elif len(ncm_limpo) >= 4:
             posicao = ncm_limpo[:4]
             if posicao in df_tipi.index:
                 row = df_tipi.loc[posicao]
-                if isinstance(row, pd.DataFrame):
-                    resultado = row.iloc[0, 0]
-                else:
-                    resultado = row.iloc[0]
-                if resultado:
-                    resultado = f"[Posição {posicao}] {resultado}"
+                if isinstance(row, pd.DataFrame): resultado = row.iloc[0, 0]
+                else: resultado = row.iloc[0]
+                if resultado: resultado = f"[Posição {posicao}] {resultado}"
 
-        # TRATAMENTO ANTI-NAN
         if pd.isna(resultado) or str(resultado).lower().strip() == 'nan':
             return "Descrição não encontrada na TIPI"
         return str(resultado)
 
-    except:
-        return "Erro ao ler descrição"
+    except: return "Erro ao ler descrição"
 
-# --- FUNÇÃO PARA GERAR MODELO EXCEL ---
+# --- GERAR MODELO EXCEL ---
 def gerar_modelo_excel():
-    # Cria um DataFrame de exemplo
     df_modelo = pd.DataFrame({
         'NCM': ['1006.30.21', '3004.90.69', '2202.10.00'],
         'CFOP': ['5102', '5405', '5102'],
         'Descricao_Interna': ['Arroz (Exemplo)', 'Medicamento (Exemplo)', 'Refrigerante (Exemplo)']
     })
-    
-    # Converte para BytesIO (arquivo em memória)
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df_modelo.to_excel(writer, index=False, sheet_name='Modelo_Importacao')
@@ -172,7 +168,7 @@ with st.sidebar:
     mapa_lei, df_regras_json = carregar_bases()
     df_tipi = carregar_tipi_cache(uploaded_tipi)
 
-# --- FUNÇÕES AUXILIARES ---
+# --- FUNÇÕES GERAIS ---
 ns = {'ns': 'http://www.portalfiscal.inf.br/nfe'}
 
 def processar_arquivos_com_barra(arquivos, tipo):
@@ -204,12 +200,6 @@ def preparar_exibicao(df):
     if 'Produto' in df.columns:
         return df.rename(columns={'Produto': 'Descrição Produto'})[cols_existentes]
     return df[cols_existentes]
-
-def converter_df_para_excel(df):
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name='Resultado')
-    return output.getvalue()
 
 # ==============================================================================
 # MODO 1: AUDITORIA & REFORMA
@@ -466,19 +456,30 @@ elif modo_app == "🔍 Consultor de Classificação":
                 )
                 cClass, desc_regra, status, novo_cst, origem_legal = resultado[0], resultado[1], resultado[2], resultado[3], resultado[4]
                 
-                # 4. Exibe Resultado
+                # 4. Exibe Resultado (NOVO LAYOUT)
                 st.markdown("---")
                 st.markdown(f"### Resultado para NCM **{ncm_input}**")
                 st.caption(f"Operação: CFOP {row_simulada['CFOP']}")
                 
-                k1, k2, k3 = st.columns(3)
+                # LINHA 1: CÓDIGOS (METRIC FICA BOM AQUI)
+                k1, k2 = st.columns(2)
                 k1.metric("Novo CST", novo_cst)
                 k2.metric("cClassTrib", cClass)
-                k3.metric("Status", status, delta="Isento" if "ZERO" in status or "REDUZIDA" in status else "Tributado", delta_color="off")
                 
-                st.info(f"📋 **Descrição TIPI:** {desc_tipi}")
-                st.success(f"⚖️ **Regra Aplicada:** {desc_regra}")
-                st.caption(f"Fonte da Regra: {origem_legal}")
+                # LINHA 2: STATUS (CAIXA DE ALERTA PARA TEXTO LONGO)
+                st.markdown("**Status Tributário:**")
+                if "ZERO" in status or "REDUZIDA" in status or "IMUNE" in status:
+                    st.success(f"✅ {status}")
+                elif "ALERTA" in status:
+                    st.error(f"🚨 {status}")
+                else:
+                    st.info(f"ℹ️ {status}")
+                
+                # LINHA 3: DETALHES TÉCNICOS
+                with st.expander("📋 Detalhes do Produto e Regra Legal", expanded=True):
+                    st.markdown(f"**Descrição TIPI:** {desc_tipi}")
+                    st.markdown(f"**Regra Aplicada:** {desc_regra}")
+                    st.caption(f"Fonte da Regra: {origem_legal}")
                 
             else:
                 st.warning("Digite um NCM para pesquisar.")
@@ -488,7 +489,7 @@ elif modo_app == "🔍 Consultor de Classificação":
         st.markdown("#### Saneamento de Cadastro (Upload Excel)")
         st.info("ℹ️ Baixe o modelo, preencha com seus produtos e faça o upload para classificar em massa.")
         
-        # --- BOTÃO DE DOWNLOAD DO MODELO (NOVO!) ---
+        # --- BOTÃO DE DOWNLOAD DO MODELO ---
         c_down, c_up = st.columns([1, 2])
         with c_down:
             st.download_button(
