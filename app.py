@@ -81,41 +81,41 @@ def carregar_bases(): return motor.carregar_base_legal(), motor.carregar_json_re
 @st.cache_data
 def carregar_tipi_cache(file): return motor.carregar_tipi(file)
 
-# --- FUNÇÃO AUXILIAR: BUSCAR DESCRIÇÃO TIPI (CORRIGIDA) ---
+# --- FUNÇÃO AUXILIAR: BUSCAR DESCRIÇÃO TIPI (CORREÇÃO NAN) ---
 def buscar_descricao_tipi(ncm, df_tipi):
     if df_tipi.empty: return "TIPI não carregada"
     ncm_limpo = str(ncm).replace('.', '').strip()
     
     try:
+        resultado = None
         # Tenta busca exata no índice
         if ncm_limpo in df_tipi.index:
             row = df_tipi.loc[ncm_limpo]
-            
-            # Lógica para pegar a Coluna 2 (Descrição) se existir
-            # Se for DataFrame (duplicidade) ou Series (único)
+            # Pega a primeira coluna disponível se for DataFrame ou Series
             if isinstance(row, pd.DataFrame):
-                # Se tiver mais de uma coluna, pega a segunda (índice 1)
-                return str(row.iloc[0, 1]) if row.shape[1] > 1 else str(row.iloc[0, 0])
+                resultado = row.iloc[0, 0] # Pega a primeira coluna da primeira linha
             else:
-                # Se for Series
-                return str(row.iloc[1]) if len(row) > 1 else str(row.iloc[0])
-    
-        # Tenta busca por prefixo (Ex: NCM de 8 dígitos buscando a posição de 4)
-        if len(ncm_limpo) >= 4:
+                resultado = row.iloc[0] # Pega o primeiro valor da Series
+        
+        # Tenta busca por prefixo (Ex: 8 dígitos buscando posição de 4)
+        elif len(ncm_limpo) >= 4:
             posicao = ncm_limpo[:4]
             if posicao in df_tipi.index:
                 row = df_tipi.loc[posicao]
-                desc = ""
                 if isinstance(row, pd.DataFrame):
-                    desc = str(row.iloc[0, 1]) if row.shape[1] > 1 else str(row.iloc[0, 0])
+                    resultado = row.iloc[0, 0]
                 else:
-                    desc = str(row.iloc[1]) if len(row) > 1 else str(row.iloc[0])
-                return f"[Posição {posicao}] {desc}"
-            
+                    resultado = row.iloc[0]
+                if resultado:
+                    resultado = f"[Posição {posicao}] {resultado}"
+
+        # TRATAMENTO ANTI-NAN
+        if pd.isna(resultado) or str(resultado).lower().strip() == 'nan':
+            return "Descrição não encontrada na TIPI"
+        return str(resultado)
+
     except:
         return "Erro ao ler descrição"
-            
-    return "Descrição não encontrada na TIPI"
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -131,7 +131,6 @@ with st.sidebar:
     
     uploaded_tipi = None 
     
-    # Parâmetros visíveis em todos os modos que usam motor de cálculo
     if modo_app in ["📊 Auditoria & Reforma", "🔍 Consultor de Classificação"]:
         if st.session_state.empresa_nome != "Nenhuma Empresa" and modo_app == "📊 Auditoria & Reforma":
             st.success(f"🏢 {st.session_state.empresa_nome}")
@@ -190,12 +189,6 @@ def preparar_exibicao(df):
     if 'Produto' in df.columns:
         return df.rename(columns={'Produto': 'Descrição Produto'})[cols_existentes]
     return df[cols_existentes]
-
-def converter_df_para_excel(df):
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name='Resultado')
-    return output.getvalue()
 
 # ==============================================================================
 # MODO 1: AUDITORIA & REFORMA
@@ -332,7 +325,6 @@ if modo_app == "📊 Auditoria & Reforma":
                     if 'div' in locals() and not div.empty: div.to_excel(writer, sheet_name="Divergencia_Valor", index=False)
             st.download_button("📊 BAIXAR EXCEL", buf, "Auditoria_Dados.xlsx", "primary", use_container_width=True)
 
-
 # ==============================================================================
 # MODO 2: COMPARADOR SPED VS SPED
 # ==============================================================================
@@ -407,7 +399,7 @@ elif modo_app == "⚔️ Comparador SPED vs SPED":
         st.info("Aguardando arquivos válidos para comparação...")
 
 # ==============================================================================
-# MODO 3: CONSULTOR DE CLASSIFICAÇÃO (NOVO!)
+# MODO 3: CONSULTOR DE CLASSIFICAÇÃO
 # ==============================================================================
 elif modo_app == "🔍 Consultor de Classificação":
     st.markdown("""
@@ -445,14 +437,14 @@ elif modo_app == "🔍 Consultor de Classificação":
                     'vICMS': 0, 'vPIS': 0, 'vCOFINS': 0
                 }
                 
-                # 3. Chama o Motor de Regras (O mesmo da Auditoria)
+                # 3. Chama o Motor de Regras
                 resultado = motor.classificar_item(
                     row_simulada, mapa_lei, df_regras_json, df_tipi, 
                     aliq_ibs/100, aliq_cbs/100
                 )
                 cClass, desc_regra, status, novo_cst, origem_legal = resultado[0], resultado[1], resultado[2], resultado[3], resultado[4]
                 
-                # 4. Exibe Resultado Bonito
+                # 4. Exibe Resultado
                 st.markdown("---")
                 st.markdown(f"### Resultado para NCM **{ncm_input}**")
                 st.caption(f"Operação: CFOP {row_simulada['CFOP']}")
@@ -460,7 +452,7 @@ elif modo_app == "🔍 Consultor de Classificação":
                 k1, k2, k3 = st.columns(3)
                 k1.metric("Novo CST", novo_cst)
                 k2.metric("cClassTrib", cClass)
-                k3.metric("Status", status, delta="Isento" if status.startswith("ZERO") else "Tributado", delta_color="off")
+                k3.metric("Status", status, delta="Isento" if "ZERO" in status or "REDUZIDA" in status else "Tributado", delta_color="off")
                 
                 st.info(f"📋 **Descrição TIPI:** {desc_tipi}")
                 st.success(f"⚖️ **Regra Aplicada:** {desc_regra}")
@@ -484,11 +476,10 @@ elif modo_app == "🔍 Consultor de Classificação":
                 else:
                     df_lote = pd.read_excel(uploaded_lote, dtype=str)
                 
-                # Verifica colunas necessárias
+                # Verifica colunas
                 col_ncm = None
                 col_cfop = None
                 
-                # Tenta achar a coluna NCM (flexível com maiúsculas/minúsculas)
                 for col in df_lote.columns:
                     if 'ncm' in col.lower(): col_ncm = col
                     if 'cfop' in col.lower(): col_cfop = col
@@ -496,24 +487,18 @@ elif modo_app == "🔍 Consultor de Classificação":
                 if col_ncm:
                     st.success(f"Processando {len(df_lote)} linhas...")
                     
-                    # Prepara DataFrame de Resultado
                     resultados_lote = []
-                    
-                    # Barra de progresso
                     prog_bar = st.progress(0)
                     total = len(df_lote)
                     
                     for idx, row in df_lote.iterrows():
                         ncm_val = str(row[col_ncm])
-                        cfop_val = str(row[col_cfop]) if col_cfop else "5102"
+                        cfop_val = str(row[col_cfop]) if col_cfop and pd.notna(row[col_cfop]) else "5102"
                         
-                        # Simula linha para o motor
                         row_sim = {'NCM': ncm_val, 'CFOP': cfop_val, 'Valor': 100.0, 'vICMS':0, 'vPIS':0, 'vCOFINS':0}
-                        
-                        # Chama Motor
                         res = motor.classificar_item(row_sim, mapa_lei, df_regras_json, df_tipi, aliq_ibs/100, aliq_cbs/100)
                         
-                        # Busca Descrição TIPI
+                        # DESCRIÇÃO TIPI CORRIGIDA (SEM NAN)
                         desc_tipi = buscar_descricao_tipi(ncm_val, df_tipi)
                         
                         resultados_lote.append({
@@ -530,20 +515,13 @@ elif modo_app == "🔍 Consultor de Classificação":
                     
                     prog_bar.empty()
                     df_resultado = pd.DataFrame(resultados_lote)
-                    
                     st.dataframe(df_resultado)
                     
-                    # Botão Download
                     csv = df_resultado.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
-                    st.download_button(
-                        "📥 Baixar Resultado (CSV)",
-                        csv,
-                        "Resultado_Classificacao.csv",
-                        "text/csv"
-                    )
+                    st.download_button("📥 Baixar Resultado (CSV)", csv, "Resultado_Classificacao.csv", "text/csv")
                     
                 else:
-                    st.error("Não encontrei a coluna 'NCM' no seu arquivo. Verifique o cabeçalho.")
+                    st.error("Não encontrei a coluna 'NCM'. Verifique o cabeçalho.")
                     
             except Exception as e:
                 st.error(f"Erro ao processar arquivo: {e}")
