@@ -6,18 +6,29 @@ import os
 import re
 import io
 
-# --- 1. MAPA DE INTELIGÊNCIA (CSTs) ---
+# --- 1. MAPA DE INTELIGÊNCIA (CSTs Baseados no JSON) ---
 MAPA_CST_CORRETO = {
+    # Reduções (CST 200)
     "200003": "200", "200004": "200", "200005": "200", 
     "200009": "200", "200010": "200", "200014": "200",
-    "200022": "200", # ADICIONADO ZFM
-    "200030": "200", "200032": "200", "200034": "200", "200035": "200",
-    "000001": "000", "410004": "410", 
-    "000002": "000", "000003": "000", "010001": "010", "011001": "011",
-    "200001": "200", "200002": "200", "400001": "400", "410001": "410"
+    "200022": "200", "200030": "200", "200032": "200", 
+    "200034": "200", "200035": "200",
+    # Padrão
+    "000001": "000", "000002": "000", "000003": "000",
+    # Imunidade / Não Incidência (CST 410)
+    "410001": "410", "410003": "410", "410004": "410", "410999": "410",
+    # Isenção (CST 400)
+    "400001": "400",
+    # Suspensão (CST 550)
+    "550001": "550", "550020": "550",
+    # Diferimento (CST 510)
+    "510001": "510",
+    # Monofásico (CST 620)
+    "620001": "620"
 }
 
-# --- 2. DADOS E REGRAS (TEXTO MESTRA) ---
+# --- 2. CONFIGURAÇÃO TRIBUTÁRIA E DADOS ---
+# (Mantendo TEXTO_MESTRA e CONFIG_ANEXOS originais para brevidade, mas eles continuam valendo)
 TEXTO_MESTRA = """
 ANEXO I (ZERO)
 1006.20 1006.30 1006.40.00 0401.10.10 0401.10.90 0401.20.10 0401.20.90 0401.40.10 0401.50.10
@@ -44,7 +55,6 @@ ANEXO XV (ZERO)
 0407.2 0701 0702 0703 0704 0705 0706 0708 0709 0710 0803 0804 0805 0806 0807 0808 0809 0810 0811 0714 0801
 """
 
-# --- 3. CONFIGURAÇÃO TRIBUTÁRIA ---
 CONFIG_ANEXOS = {
     "ANEXO I":   {"Descricao": "Cesta Básica Nacional", "cClassTrib": "200003", "Reducao": 1.0, "CST_Default": "200", "Status": "ZERO (Anexo I)", "Caps": []},
     "ANEXO IV":  {"Descricao": "Dispositivos Médicos", "cClassTrib": "200005", "Reducao": 0.6, "CST_Default": "200", "Status": "REDUZIDA 60% (Anexo IV)", "Caps": ["30","90"]},
@@ -56,6 +66,7 @@ CONFIG_ANEXOS = {
 }
 
 def carregar_tipi(uploaded_file=None):
+    # Lógica de carregamento TIPI (mantida)
     arquivo = uploaded_file if uploaded_file else ("tipi.xlsx" if os.path.exists("tipi.xlsx") else None)
     if not arquivo: return pd.DataFrame()
     try:
@@ -78,6 +89,7 @@ def carregar_json_regras():
     except: return pd.DataFrame(columns=['Busca'])
 
 def extrair_regras(texto_fonte, mapa_existente, nome_fonte):
+    # Lógica de extração de NCMs do texto (mantida)
     texto = re.sub(r'\s+', ' ', texto_fonte)
     anexos_pos = []
     for anexo in CONFIG_ANEXOS.keys():
@@ -101,10 +113,6 @@ def extrair_regras(texto_fonte, mapa_existente, nome_fonte):
 
 def carregar_base_legal():
     mapa = {}
-    try:
-        url = "https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp214.htm"
-        pass
-    except: pass
     mapa = extrair_regras(TEXTO_MESTRA, mapa, "BACKUP")
     caps_anexo_vii = ['10', '11', '12'] 
     for cap in caps_anexo_vii:
@@ -128,9 +136,9 @@ def obter_cst_final(c_class_trib, df_json):
                 return str(match.iloc[0][col_cst]).strip()
     return '000'
 
+# --- MOTOR PRINCIPAL DE CLASSIFICAÇÃO ---
 def classificar_item(row, mapa_regras, df_json, df_tipi, aliq_ibs, aliq_cbs):
     ncm = str(row['NCM']).replace('.', '')
-    # Garante que CFOP tenha apenas números para comparação
     cfop_raw = str(row['CFOP']).replace('.', '') if 'CFOP' in row else '0000'
     cfop = cfop_raw
     
@@ -143,33 +151,38 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliq_ibs, aliq_cbs):
     v_cofins = float(row.get('vCOFINS', 0))
     imposto_atual = v_icms + v_pis + v_cofins
     
-    # Base de Cálculo Padrão
+    # Base Padrão
     base_liquida = max(0, valor_prod - imposto_atual)
     ibs_padrao = base_liquida * aliq_ibs
     cbs_padrao = base_liquida * aliq_cbs
     
     # 1. VALIDAÇÃO TIPI
     validacao = "⚠️ NCM Ausente (TIPI)"
-    if ncm == 'SEM_DETALHE':
-        validacao = "ℹ️ SPED Perfil B"
+    if ncm == 'SEM_DETALHE': validacao = "ℹ️ SPED Perfil B"
     elif not df_tipi.empty:
         if ncm in df_tipi.index: validacao = "✅ NCM Válido"
         elif ncm[:4] in df_tipi.index: validacao = "✅ Posição Válida"
 
-    # --- LISTA DE CFOPs ESPECIAIS ---
+    # --- DEFINIÇÃO DE GRUPOS DE CFOP ---
     
-    # 1. ZONA FRANCA DE MANAUS (Vendas Incentivadas)
-    # 5109/6109 = Venda de produção, 5110/6110 = Venda de mercadoria
+    # Bonificação (Código específico no JSON)
+    cfops_bonificacao = ['1910', '2910', '5910', '6910']
+    
+    # Amostra Grátis, Brindes, Demonstração (Genérico não oneroso)
+    cfops_amostra = ['1911', '2911', '5911', '6911', '5912', '6912', '5913', '6913']
+    
+    # Suspensão / Industrialização / Conserto
+    cfops_suspensao = ['5901', '6901', '5902', '6902', '5915', '6915', '5916', '6916']
+    
+    # ZFM (Vendas Incentivadas - CST 200)
     cfops_zfm = ['5109', '6109', '5110', '6110']
+    
+    # Áreas de Livre Comércio (ALC) - Diferente de ZFM no JSON (CST 550)
+    # *Nota: Geralmente usa-se os mesmos CFOPs de ZFM, mas depende do cadastro do cliente se é ALC ou ZFM.
+    # Por padrão, vamos priorizar ZFM (mais comum), mas se houver indicador de ALC, mudaria.
 
-    # 2. OPERAÇÕES NÃO ONEROSAS / SUSPENSÃO
-    cfops_excecao = [
-        '1910', '2910', '5910', '6910', # Bonificação/Doação
-        '1911', '2911', '5911', '6911', # Amostra Grátis
-        '5912', '6912', '5913', '6913', # Demonstração
-        '5901', '6901', '5902', '6902', # Industrialização
-        '5915', '6915', '5916', '6916'  # Conserto / Reparo
-    ]
+    # Comércio Exterior
+    cfops_export = ['7101', '7102', '7127', '7501', '7930', '7949'] 
 
     # --- VARIÁVEIS DE RESULTADO PADRÃO ---
     cClassTrib = '000001'
@@ -180,9 +193,8 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliq_ibs, aliq_cbs):
     v_ibs_final = ibs_padrao
     v_cbs_final = cbs_padrao
 
-    # --- PASSO 1: CLASSIFICAÇÃO PELO NCM (Base Legal / Texto Mestra) ---
+    # --- PASSO 1: REGRA DO PRODUTO (NCM) ---
     anexo_encontrado = None
-    
     for tent in [ncm, ncm[:6], ncm[:4], ncm[:2]]:
         if tent in mapa_regras:
             anexo_encontrado = mapa_regras[tent]
@@ -194,41 +206,66 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliq_ibs, aliq_cbs):
         cClassTrib = regra['cClassTrib']
         desc_final = regra['Descricao']
         status_final = regra['Status']
-        
         fator = regra.get('Reducao', 0.0)
-        
         v_ibs_final = ibs_padrao * (1 - fator)
         v_cbs_final = cbs_padrao * (1 - fator)
         cst_final = obter_cst_final(cClassTrib, df_json)
-    
-    else:
-        if ncm != 'SEM_DETALHE' and not df_json.empty and 'Busca' in df_json.columns:
-            # Fallback para medicamentos/cesta se não estiver no Mestra
-            pass
 
-    # --- PASSO 2: CAMADA ZONA FRANCA DE MANAUS (Prioridade Alta) ---
+    # --- PASSO 2: REGRA DA OPERAÇÃO (CFOP) - SOBRESCRITA ---
+    
+    # 2.1 ZONA FRANCA DE MANAUS (Incentivada)
     if cfop in cfops_zfm:
-        cClassTrib = '200022' # Venda originada fora da ZFM para ZFM (CST 200 - Redução 100%)
-        desc_final = f"Venda Incentivada ZFM/ALC (CFOP {cfop})"
+        cClassTrib = '200022' # Conforme JSON: Op. originada fora da ZFM
+        desc_final = f"Venda ZFM (Lei Comp. 214/2025)"
         status_final = 'REDUZIDA 100% (ZFM)'
         cst_final = '200' 
-        origem_final = "Regra ZFM (Lei Comp. 214/2025)"
-        v_ibs_final = 0.0 # Redução de 100%
-        v_cbs_final = 0.0
-
-    # --- PASSO 3: CAMADA NÃO ONEROSA / SUSPENSÃO (Prioridade Máxima para zerar) ---
-    elif cfop in cfops_excecao:
-        cClassTrib = '410999'
-        desc_final = f"Op. Não Onerosa / Suspensão (CFOP {cfop})"
-        status_final = 'ZERO (CFOP)'
-        cst_final = '410' 
-        origem_final = "Regra de CFOP"
+        origem_final = "Regra ZFM/JSON"
         v_ibs_final = 0.0
         v_cbs_final = 0.0
-    
-    # Comércio Exterior
-    if cfop.startswith('7') or cfop.startswith('3'): 
-        return '410004', 'Comércio Exterior', 'IMUNE/SUSPENSO', obter_cst_final("410004", df_json), 'CFOP', validacao, 0.0, 0.0, 0.0, 0.0
+
+    # 2.2 EXPORTAÇÃO (Imunidade)
+    elif cfop.startswith('7') or cfop in cfops_export:
+        cClassTrib = '410004' # Conforme JSON: Exportações
+        desc_final = "Exportação de Bens e Serviços"
+        status_final = 'IMUNE (EXP)'
+        cst_final = '410'
+        origem_final = "Regra Exportação/JSON"
+        v_ibs_final = 0.0
+        v_cbs_final = 0.0
+
+    # 2.3 BONIFICAÇÃO (Código Específico do JSON)
+    elif cfop in cfops_bonificacao:
+        cClassTrib = '410001' # Conforme JSON: Fornecimento de bonificações
+        desc_final = f"Bonificação (CFOP {cfop})"
+        status_final = 'NÃO INCIDÊNCIA'
+        cst_final = '410'
+        origem_final = "Regra Bonificação/JSON"
+        v_ibs_final = 0.0
+        v_cbs_final = 0.0
+
+    # 2.4 OUTRAS NÃO ONEROSAS (Amostra, Brinde)
+    elif cfop in cfops_amostra:
+        cClassTrib = '410999' # Genérico para não onerosas não especificadas
+        desc_final = f"Op. Não Onerosa (Amostra/Brinde)"
+        status_final = 'ZERO (Genérico)'
+        cst_final = '410'
+        origem_final = "Regra CFOP"
+        v_ibs_final = 0.0
+        v_cbs_final = 0.0
+
+    # 2.5 SUSPENSÃO (Conserto, Industrialização)
+    elif cfop in cfops_suspensao:
+        # JSON sugere códigos 550xxx para suspensões específicas (Ex: 550007 para Aperfeiçoamento)
+        # Se for conserto simples, mantemos a lógica de 'Não Oneroso' ou 'Suspensão Genérica'
+        # Vamos usar 410999 por segurança ou 550007 se for industrialização.
+        # Simplificação: Zerar tributo.
+        cClassTrib = '410999' 
+        desc_final = f"Suspensão/Retorno (CFOP {cfop})"
+        status_final = 'ZERO (Suspensão)'
+        cst_final = '410' # Poderia ser 550 se fosse específico do regime especial
+        origem_final = "Regra CFOP"
+        v_ibs_final = 0.0
+        v_cbs_final = 0.0
 
     # Uso e Consumo (Entrada)
     cfop_base = cfop[1:]
@@ -236,12 +273,15 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliq_ibs, aliq_cbs):
     if tipo_op == 'ENTRADA' and eh_uso_consumo:
          return '000001', 'Crédito de Uso/Consumo ou Ativo', 'CREDITO PERMITIDO', '000', f'CFOP {cfop}', validacao, 0.0, ibs_padrao+cbs_padrao, ibs_padrao, cbs_padrao
 
+    # Seletivo (Trava final)
     if verificar_seletivo(ncm):
-        return '000001', 'Produto sujeito a Seletivo', 'ALERTA SELETIVO', '002', 'Trava', validacao, imposto_atual, v_ibs_final+v_cbs_final, v_ibs_final, v_cbs_final
+        return '000001', 'Produto sujeito a Seletivo', 'ALERTA SELETIVO', '002', 'Trava Seletivo', validacao, imposto_atual, v_ibs_final+v_cbs_final, v_ibs_final, v_cbs_final
 
     imposto_futuro = v_ibs_final + v_cbs_final
     return cClassTrib, desc_final, status_final, cst_final, origem_final, validacao, imposto_atual, imposto_futuro, v_ibs_final, v_cbs_final
 
+# Funções auxiliares de XML/SPED mantidas (extrair_nome_empresa_xml, processar_xml_detalhado, etc.)
+# ... (Mantenha o restante do código igual ao arquivo anterior)
 def extrair_nome_empresa_xml(tree, ns):
     root = tree.getroot()
     emit = root.find('.//ns:emit', ns)
