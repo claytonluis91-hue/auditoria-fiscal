@@ -63,15 +63,6 @@ st.markdown("""
     .main-header { font-size: 2.2rem; font-weight: 800; color: #FFFFFF; margin: 0; letter-spacing: -1px; }
     .sub-header { font-size: 1rem; color: #FDEBD0; margin-top: 5px; opacity: 0.9; }
     
-    /* Ajuste para cards de resultado */
-    .result-card {
-        background-color: white; padding: 20px; border-radius: 10px;
-        border: 1px solid #E0E0E0; box-shadow: 0 2px 5px rgba(0,0,0,0.05);
-        margin-bottom: 15px;
-    }
-    .result-title { font-size: 0.9rem; color: #7F8C8D; font-weight: 600; margin-bottom: 5px; }
-    .result-value { font-size: 1.3rem; color: #2C3E50; font-weight: 700; }
-    
     div[data-testid="stMetric"] { 
         background-color: #FFFFFF !important; border: 1px solid #E0E0E0; 
         border-radius: 10px; padding: 15px; box-shadow: 0 2px 5px rgba(0,0,0,0.05);
@@ -101,7 +92,6 @@ def buscar_descricao_tipi(ncm, df_tipi):
             row = df_tipi.loc[ncm_limpo]
             if isinstance(row, pd.DataFrame): resultado = row.iloc[0, 0]
             else: resultado = row.iloc[0]
-        
         elif len(ncm_limpo) >= 4:
             posicao = ncm_limpo[:4]
             if posicao in df_tipi.index:
@@ -113,7 +103,6 @@ def buscar_descricao_tipi(ncm, df_tipi):
         if pd.isna(resultado) or str(resultado).lower().strip() == 'nan':
             return "Descrição não encontrada na TIPI"
         return str(resultado)
-
     except: return "Erro ao ler descrição"
 
 # --- GERAR MODELO EXCEL ---
@@ -127,6 +116,49 @@ def gerar_modelo_excel():
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df_modelo.to_excel(writer, index=False, sheet_name='Modelo_Importacao')
     return output.getvalue()
+
+# --- FUNÇÃO DE COMPARAÇÃO AVANÇADA (NOVA!) ---
+def comparar_speds_avancado(df_a, df_b, label_a="SPED A", label_b="SPED B"):
+    # Agrupa por Chave e CFOP para somar valores (caso haja quebra por alíquota)
+    cols_group = ['Chave NFe', 'CFOP']
+    cols_sum = ['Valor', 'vICMS', 'vPIS', 'vCOFINS']
+    
+    # Garante colunas numéricas
+    for col in cols_sum:
+        if col in df_a.columns: df_a[col] = pd.to_numeric(df_a[col], errors='coerce').fillna(0)
+        if col in df_b.columns: df_b[col] = pd.to_numeric(df_b[col], errors='coerce').fillna(0)
+
+    # Agrupa
+    g_a = df_a.groupby(cols_group)[cols_sum].sum().reset_index()
+    g_b = df_b.groupby(cols_group)[cols_sum].sum().reset_index()
+    
+    # Merge (Cruzamento)
+    merged = pd.merge(
+        g_a, g_b, 
+        on=['Chave NFe', 'CFOP'], 
+        how='outer', 
+        suffixes=('_A', '_B'), 
+        indicator=True
+    )
+    
+    # Analisa Resultados
+    merged['Dif_Valor'] = merged['Valor_A'].fillna(0) - merged['Valor_B'].fillna(0)
+    merged['Dif_ICMS'] = merged['vICMS_A'].fillna(0) - merged['vICMS_B'].fillna(0)
+    
+    # 1. Divergência de Valores (Mesma Chave, Mesmo CFOP, Valor Diferente)
+    div_valor = merged[
+        (merged['_merge'] == 'both') & 
+        (abs(merged['Dif_Valor']) > 0.05) # Tolerância 5 centavos
+    ].copy()
+    
+    # 2. Omissões ou Erro de CFOP
+    # Aqui é mais sutil. Se a chave existe em A com CFOP 5102 e em B com 5405,
+    # vai aparecer como uma linha 'left_only' (5102) e uma 'right_only' (5405).
+    # Vamos separar puramente o que é "Exclusivo de cada lado"
+    so_a = merged[merged['_merge'] == 'left_only'].copy()
+    so_b = merged[merged['_merge'] == 'right_only'].copy()
+    
+    return div_valor, so_a, so_b, len(g_a), len(g_b)
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -149,7 +181,6 @@ with st.sidebar:
         c1, c2 = st.columns(2)
         with c1: aliq_ibs = st.number_input("IBS (%)", 0.0, 50.0, 17.7, 0.1)
         with c2: aliq_cbs = st.number_input("CBS (%)", 0.0, 50.0, 8.8, 0.1)
-        
         with st.expander("📂 Atualizar TIPI"):
             uploaded_tipi = st.file_uploader("TIPI", type=['xlsx', 'csv'])
             if st.button("🔄 Recarregar"):
@@ -158,7 +189,7 @@ with st.sidebar:
                 st.rerun()
                 
     elif modo_app == "⚔️ Comparador SPED vs SPED":
-        st.info("ℹ️ Validação de Arquivos.")
+        st.info("ℹ️ Auditoria Cruzada de Escrituração.")
 
     st.markdown("<br>", unsafe_allow_html=True)
     if st.button("🗑️ LIMPAR TUDO", type="secondary"):
@@ -200,6 +231,12 @@ def preparar_exibicao(df):
     if 'Produto' in df.columns:
         return df.rename(columns={'Produto': 'Descrição Produto'})[cols_existentes]
     return df[cols_existentes]
+
+def converter_df_para_excel(df):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Resultado')
+    return output.getvalue()
 
 # ==============================================================================
 # MODO 1: AUDITORIA & REFORMA
@@ -338,77 +375,104 @@ if modo_app == "📊 Auditoria & Reforma":
 
 
 # ==============================================================================
-# MODO 2: COMPARADOR SPED VS SPED
+# MODO 2: COMPARADOR SPED VS SPED (NOVO MOTOR DE COMPARAÇÃO)
 # ==============================================================================
 elif modo_app == "⚔️ Comparador SPED vs SPED":
     st.markdown("""
     <div class="header-container">
         <div class="main-header">Comparador de Arquivos SPED</div>
-        <div class="sub-header">Validação Cruzada: Original (Cliente) vs Gerado (ERP)</div>
+        <div class="sub-header">Validação Cruzada por CFOP e Valor (Entradas e Saídas)</div>
     </div>
     """, unsafe_allow_html=True)
     
     col1, col2 = st.columns(2)
+    
+    # Upload SPED A
     with col1:
-        st.markdown("### 📁 1. SPED Original")
+        st.markdown("### 📁 1. SPED Original (Cliente)")
         file1 = st.file_uploader("Selecione o SPED do Cliente", type=['txt'], key="sped1")
-        if not file1:
-            st.session_state.sped1_vendas = pd.DataFrame(columns=cols_padrao)
-        elif file1 and st.session_state.sped1_vendas.empty:
-            with st.spinner("Lendo Arquivo A..."):
+        if file1 and st.session_state.sped1_vendas.empty:
+            with st.spinner("Processando SPED A..."):
                 n1, v1, c1 = motor.processar_sped_fiscal(file1)
                 st.session_state.sped1_vendas = pd.DataFrame(v1) if v1 else pd.DataFrame(columns=cols_padrao)
-                st.success(f"Arquivo A: {len(v1)} Vendas")
+                st.session_state.sped1_compras = pd.DataFrame(c1) if c1 else pd.DataFrame(columns=cols_padrao)
+                st.success(f"Lido: {len(v1)} Saídas | {len(c1)} Entradas")
                 st.rerun()
                 
+    # Upload SPED B
     with col2:
-        st.markdown("### 💻 2. SPED Gerado")
+        st.markdown("### 💻 2. SPED Gerado (ERP/Sistema)")
         file2 = st.file_uploader("Selecione o SPED do ERP", type=['txt'], key="sped2")
-        if not file2:
-            st.session_state.sped2_vendas = pd.DataFrame(columns=cols_padrao)
-        elif file2 and st.session_state.sped2_vendas.empty:
-            with st.spinner("Lendo Arquivo B..."):
+        if file2 and st.session_state.sped2_vendas.empty:
+            with st.spinner("Processando SPED B..."):
                 n2, v2, c2 = motor.processar_sped_fiscal(file2)
                 st.session_state.sped2_vendas = pd.DataFrame(v2) if v2 else pd.DataFrame(columns=cols_padrao)
-                st.success(f"Arquivo B: {len(v2)} Vendas")
+                st.session_state.sped2_compras = pd.DataFrame(c2) if c2 else pd.DataFrame(columns=cols_padrao)
+                st.success(f"Lido: {len(v2)} Saídas | {len(c2)} Entradas")
                 st.rerun()
 
-    df1 = st.session_state.sped1_vendas
-    df2 = st.session_state.sped2_vendas
-    
-    try:
-        if not df1.empty and not df2.empty:
-            required = ['Chave NFe', 'Valor']
-            if all(col in df1.columns for col in required) and all(col in df2.columns for col in required):
-                st.divider()
-                st.markdown("### 📊 Resultado da Comparação")
-                g1 = df1.groupby('Chave NFe')['Valor'].sum().reset_index().rename(columns={'Valor': 'Valor_A'})
-                g2 = df2.groupby('Chave NFe')['Valor'].sum().reset_index().rename(columns={'Valor': 'Valor_B'})
-                comp = pd.merge(g1, g2, on='Chave NFe', how='outer', indicator=True)
-                comp['Diferença'] = comp['Valor_A'].fillna(0) - comp['Valor_B'].fillna(0)
-                so_no_cliente = comp[comp['_merge'] == 'left_only']
-                so_no_erp = comp[comp['_merge'] == 'right_only']
-                divergentes = comp[(comp['_merge'] == 'both') & (abs(comp['Diferença']) > 0.01)]
-                iguais = comp[(comp['_merge'] == 'both') & (abs(comp['Diferença']) <= 0.01)]
+    # --- LÓGICA DE COMPARAÇÃO ---
+    if not st.session_state.sped1_vendas.empty and not st.session_state.sped2_vendas.empty:
+        st.divider()
+        st.markdown("### 📊 Resultado da Auditoria Cruzada")
+        
+        tab_vendas, tab_compras = st.tabs(["📤 Comparar Saídas (Vendas)", "📥 Comparar Entradas (Compras)"])
+        
+        # 1. COMPARAÇÃO DE VENDAS
+        with tab_vendas:
+            div_v, so_a_v, so_b_v, tot_a, tot_b = comparar_speds_avancado(
+                st.session_state.sped1_vendas, 
+                st.session_state.sped2_vendas
+            )
+            
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("Total Cliente", tot_a)
+            k2.metric("Total ERP", tot_b)
+            k3.metric("Divergência Valor", len(div_v), delta_color="inverse")
+            k4.metric("Divergência CFOP/Omissão", len(so_a_v) + len(so_b_v), delta_color="inverse")
+            
+            if not div_v.empty:
+                st.error("💰 **Divergência de Valores (Mesma Chave e CFOP):**")
+                st.dataframe(div_v[['Chave NFe', 'CFOP', 'Valor_A', 'Valor_B', 'Dif_Valor', 'Dif_ICMS']])
+            
+            if not so_a_v.empty:
+                st.warning("⚠️ **Consta no Cliente, mas NÃO no ERP (Ou CFOP Diferente):**")
+                st.dataframe(so_a_v[['Chave NFe', 'CFOP', 'Valor_A']])
                 
-                k1, k2, k3, k4 = st.columns(4)
-                k1.metric("Total Cliente", len(g1))
-                k2.metric("Total ERP", len(g2))
-                k3.metric("Faltantes", len(so_no_cliente), delta_color="inverse")
-                k4.metric("Div. Valor", len(divergentes), delta_color="inverse")
+            if not so_b_v.empty:
+                st.info("ℹ️ **Consta no ERP, mas NÃO no Cliente (Ou CFOP Diferente):**")
+                st.dataframe(so_b_v[['Chave NFe', 'CFOP', 'Valor_B']])
                 
-                t1, t2 = st.tabs(["⚠️ Divergências", "✅ Iguais"])
-                with t1:
-                    if not so_no_cliente.empty: st.error("🚨 Notas SUMIRAM no ERP:"); st.dataframe(so_no_cliente)
-                    if not so_no_erp.empty: st.warning("⚠️ Notas EXTRAS no ERP:"); st.dataframe(so_no_erp)
-                    if not divergentes.empty: st.warning("💰 Valores Alterados:"); st.dataframe(divergentes)
-                    if so_no_cliente.empty and so_no_erp.empty and divergentes.empty: st.success("Perfeito!")
-                with t2:
-                    st.success(f"{len(iguais)} Notas conferem."); st.dataframe(iguais)
-            else:
-                st.warning("⚠️ Arquivos carregados, mas não contêm dados de venda válidos.")
-    except Exception as e:
-        st.info("Aguardando arquivos válidos para comparação...")
+            if div_v.empty and so_a_v.empty and so_b_v.empty:
+                st.success("✅ As Saídas estão idênticas nos dois arquivos!")
+
+        # 2. COMPARAÇÃO DE COMPRAS
+        with tab_compras:
+            div_c, so_a_c, so_b_c, tot_a_c, tot_b_c = comparar_speds_avancado(
+                st.session_state.sped1_compras, 
+                st.session_state.sped2_compras
+            )
+            
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("Total Cliente", tot_a_c)
+            k2.metric("Total ERP", tot_b_c)
+            k3.metric("Divergência Valor", len(div_c), delta_color="inverse")
+            k4.metric("Divergência CFOP/Omissão", len(so_a_c) + len(so_b_c), delta_color="inverse")
+            
+            if not div_c.empty:
+                st.error("💰 **Divergência de Valores (Mesma Chave e CFOP):**")
+                st.dataframe(div_c[['Chave NFe', 'CFOP', 'Valor_A', 'Valor_B', 'Dif_Valor']])
+            
+            if not so_a_c.empty:
+                st.warning("⚠️ **Consta no Cliente, mas NÃO no ERP:**")
+                st.dataframe(so_a_c[['Chave NFe', 'CFOP', 'Valor_A']])
+                
+            if not so_b_c.empty:
+                st.info("ℹ️ **Consta no ERP, mas NÃO no Cliente:**")
+                st.dataframe(so_b_c[['Chave NFe', 'CFOP', 'Valor_B']])
+
+            if div_c.empty and so_a_c.empty and so_b_c.empty:
+                st.success("✅ As Entradas estão idênticas nos dois arquivos!")
 
 # ==============================================================================
 # MODO 3: CONSULTOR DE CLASSIFICAÇÃO
@@ -456,17 +520,15 @@ elif modo_app == "🔍 Consultor de Classificação":
                 )
                 cClass, desc_regra, status, novo_cst, origem_legal = resultado[0], resultado[1], resultado[2], resultado[3], resultado[4]
                 
-                # 4. Exibe Resultado (NOVO LAYOUT)
+                # 4. Exibe Resultado
                 st.markdown("---")
                 st.markdown(f"### Resultado para NCM **{ncm_input}**")
                 st.caption(f"Operação: CFOP {row_simulada['CFOP']}")
                 
-                # LINHA 1: CÓDIGOS (METRIC FICA BOM AQUI)
                 k1, k2 = st.columns(2)
                 k1.metric("Novo CST", novo_cst)
                 k2.metric("cClassTrib", cClass)
                 
-                # LINHA 2: STATUS (CAIXA DE ALERTA PARA TEXTO LONGO)
                 st.markdown("**Status Tributário:**")
                 if "ZERO" in status or "REDUZIDA" in status or "IMUNE" in status:
                     st.success(f"✅ {status}")
@@ -475,7 +537,6 @@ elif modo_app == "🔍 Consultor de Classificação":
                 else:
                     st.info(f"ℹ️ {status}")
                 
-                # LINHA 3: DETALHES TÉCNICOS
                 with st.expander("📋 Detalhes do Produto e Regra Legal", expanded=True):
                     st.markdown(f"**Descrição TIPI:** {desc_tipi}")
                     st.markdown(f"**Regra Aplicada:** {desc_regra}")
@@ -489,7 +550,6 @@ elif modo_app == "🔍 Consultor de Classificação":
         st.markdown("#### Saneamento de Cadastro (Upload Excel)")
         st.info("ℹ️ Baixe o modelo, preencha com seus produtos e faça o upload para classificar em massa.")
         
-        # --- BOTÃO DE DOWNLOAD DO MODELO ---
         c_down, c_up = st.columns([1, 2])
         with c_down:
             st.download_button(
@@ -504,13 +564,11 @@ elif modo_app == "🔍 Consultor de Classificação":
         
         if uploaded_lote:
             try:
-                # Lê o arquivo
                 if uploaded_lote.name.endswith('.csv'):
                     df_lote = pd.read_csv(uploaded_lote, sep=';', dtype=str)
                 else:
                     df_lote = pd.read_excel(uploaded_lote, dtype=str)
                 
-                # Verifica colunas
                 col_ncm = None
                 col_cfop = None
                 
@@ -531,8 +589,6 @@ elif modo_app == "🔍 Consultor de Classificação":
                         
                         row_sim = {'NCM': ncm_val, 'CFOP': cfop_val, 'Valor': 100.0, 'vICMS':0, 'vPIS':0, 'vCOFINS':0}
                         res = motor.classificar_item(row_sim, mapa_lei, df_regras_json, df_tipi, aliq_ibs/100, aliq_cbs/100)
-                        
-                        # DESCRIÇÃO TIPI CORRIGIDA (SEM NAN)
                         desc_tipi = buscar_descricao_tipi(ncm_val, df_tipi)
                         
                         resultados_lote.append({
