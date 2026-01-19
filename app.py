@@ -27,7 +27,7 @@ def init_df(key, columns=None):
             st.session_state[key] = pd.DataFrame()
 
 # Inicializa DataFrames com colunas essenciais
-cols_padrao = ['Chave NFe', 'Valor', 'Produto', 'NCM']
+cols_padrao = ['Chave NFe', 'Num NFe', 'Valor', 'Produto', 'NCM'] # ADICIONADO Num NFe
 init_df('xml_vendas_df', cols_padrao)
 init_df('xml_compras_df', cols_padrao)
 init_df('sped_vendas_df', cols_padrao)
@@ -85,7 +85,6 @@ def carregar_tipi_cache(file): return motor.carregar_tipi(file)
 def buscar_descricao_tipi(ncm, df_tipi):
     if df_tipi.empty: return "TIPI não carregada"
     ncm_limpo = str(ncm).replace('.', '').strip()
-    
     try:
         resultado = None
         if ncm_limpo in df_tipi.index:
@@ -117,13 +116,19 @@ def gerar_modelo_excel():
         df_modelo.to_excel(writer, index=False, sheet_name='Modelo_Importacao')
     return output.getvalue()
 
-# --- FUNÇÃO DE COMPARAÇÃO AVANÇADA (NOVA!) ---
+# --- FUNÇÃO DE COMPARAÇÃO AVANÇADA COM NFe ---
 def comparar_speds_avancado(df_a, df_b, label_a="SPED A", label_b="SPED B"):
-    # Agrupa por Chave e CFOP para somar valores (caso haja quebra por alíquota)
-    cols_group = ['Chave NFe', 'CFOP']
+    # Agrupa por Chave, Num NFe e CFOP
+    cols_group = ['Chave NFe', 'Num NFe', 'CFOP'] # Adicionado Num NFe
     cols_sum = ['Valor', 'vICMS', 'vPIS', 'vCOFINS']
     
-    # Garante colunas numéricas
+    # Garante colunas numéricas e strings
+    if 'Num NFe' not in df_a.columns: df_a['Num NFe'] = 'N/A'
+    if 'Num NFe' not in df_b.columns: df_b['Num NFe'] = 'N/A'
+    
+    df_a['Num NFe'] = df_a['Num NFe'].astype(str)
+    df_b['Num NFe'] = df_b['Num NFe'].astype(str)
+
     for col in cols_sum:
         if col in df_a.columns: df_a[col] = pd.to_numeric(df_a[col], errors='coerce').fillna(0)
         if col in df_b.columns: df_b[col] = pd.to_numeric(df_b[col], errors='coerce').fillna(0)
@@ -135,7 +140,7 @@ def comparar_speds_avancado(df_a, df_b, label_a="SPED A", label_b="SPED B"):
     # Merge (Cruzamento)
     merged = pd.merge(
         g_a, g_b, 
-        on=['Chave NFe', 'CFOP'], 
+        on=['Chave NFe', 'Num NFe', 'CFOP'], 
         how='outer', 
         suffixes=('_A', '_B'), 
         indicator=True
@@ -145,20 +150,30 @@ def comparar_speds_avancado(df_a, df_b, label_a="SPED A", label_b="SPED B"):
     merged['Dif_Valor'] = merged['Valor_A'].fillna(0) - merged['Valor_B'].fillna(0)
     merged['Dif_ICMS'] = merged['vICMS_A'].fillna(0) - merged['vICMS_B'].fillna(0)
     
-    # 1. Divergência de Valores (Mesma Chave, Mesmo CFOP, Valor Diferente)
+    # 1. Divergência de Valores
     div_valor = merged[
         (merged['_merge'] == 'both') & 
-        (abs(merged['Dif_Valor']) > 0.05) # Tolerância 5 centavos
+        (abs(merged['Dif_Valor']) > 0.05)
     ].copy()
     
-    # 2. Omissões ou Erro de CFOP
-    # Aqui é mais sutil. Se a chave existe em A com CFOP 5102 e em B com 5405,
-    # vai aparecer como uma linha 'left_only' (5102) e uma 'right_only' (5405).
-    # Vamos separar puramente o que é "Exclusivo de cada lado"
+    # 2. Omissões
     so_a = merged[merged['_merge'] == 'left_only'].copy()
     so_b = merged[merged['_merge'] == 'right_only'].copy()
     
     return div_valor, so_a, so_b, len(g_a), len(g_b)
+
+# --- GERAR EXCEL DE DIVERGÊNCIAS ---
+def gerar_excel_divergencias(div_v, so_a_v, so_b_v, div_c, so_a_c, so_b_c):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        if not div_v.empty: div_v.to_excel(writer, sheet_name='Div_Valor_Vendas', index=False)
+        if not so_a_v.empty: so_a_v.to_excel(writer, sheet_name='Falta_no_ERP_Vendas', index=False)
+        if not so_b_v.empty: so_b_v.to_excel(writer, sheet_name='Falta_no_Cliente_Vendas', index=False)
+        
+        if not div_c.empty: div_c.to_excel(writer, sheet_name='Div_Valor_Compras', index=False)
+        if not so_a_c.empty: so_a_c.to_excel(writer, sheet_name='Falta_no_ERP_Compras', index=False)
+        if not so_b_c.empty: so_b_c.to_excel(writer, sheet_name='Falta_no_Cliente_Compras', index=False)
+    return output.getvalue()
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -433,15 +448,15 @@ elif modo_app == "⚔️ Comparador SPED vs SPED":
             
             if not div_v.empty:
                 st.error("💰 **Divergência de Valores (Mesma Chave e CFOP):**")
-                st.dataframe(div_v[['Chave NFe', 'CFOP', 'Valor_A', 'Valor_B', 'Dif_Valor', 'Dif_ICMS']])
+                st.dataframe(div_v[['Num NFe', 'Chave NFe', 'CFOP', 'Valor_A', 'Valor_B', 'Dif_Valor', 'Dif_ICMS']])
             
             if not so_a_v.empty:
                 st.warning("⚠️ **Consta no Cliente, mas NÃO no ERP (Ou CFOP Diferente):**")
-                st.dataframe(so_a_v[['Chave NFe', 'CFOP', 'Valor_A']])
+                st.dataframe(so_a_v[['Num NFe', 'Chave NFe', 'CFOP', 'Valor_A']])
                 
             if not so_b_v.empty:
                 st.info("ℹ️ **Consta no ERP, mas NÃO no Cliente (Ou CFOP Diferente):**")
-                st.dataframe(so_b_v[['Chave NFe', 'CFOP', 'Valor_B']])
+                st.dataframe(so_b_v[['Num NFe', 'Chave NFe', 'CFOP', 'Valor_B']])
                 
             if div_v.empty and so_a_v.empty and so_b_v.empty:
                 st.success("✅ As Saídas estão idênticas nos dois arquivos!")
@@ -461,18 +476,32 @@ elif modo_app == "⚔️ Comparador SPED vs SPED":
             
             if not div_c.empty:
                 st.error("💰 **Divergência de Valores (Mesma Chave e CFOP):**")
-                st.dataframe(div_c[['Chave NFe', 'CFOP', 'Valor_A', 'Valor_B', 'Dif_Valor']])
+                st.dataframe(div_c[['Num NFe', 'Chave NFe', 'CFOP', 'Valor_A', 'Valor_B', 'Dif_Valor']])
             
             if not so_a_c.empty:
                 st.warning("⚠️ **Consta no Cliente, mas NÃO no ERP:**")
-                st.dataframe(so_a_c[['Chave NFe', 'CFOP', 'Valor_A']])
+                st.dataframe(so_a_c[['Num NFe', 'Chave NFe', 'CFOP', 'Valor_A']])
                 
             if not so_b_c.empty:
                 st.info("ℹ️ **Consta no ERP, mas NÃO no Cliente:**")
-                st.dataframe(so_b_c[['Chave NFe', 'CFOP', 'Valor_B']])
+                st.dataframe(so_b_c[['Num NFe', 'Chave NFe', 'CFOP', 'Valor_B']])
 
             if div_c.empty and so_a_c.empty and so_b_c.empty:
                 st.success("✅ As Entradas estão idênticas nos dois arquivos!")
+
+        # 3. DOWNLOAD
+        st.markdown("---")
+        
+        # Gera o Excel consolidado com todas as abas
+        excel_divergencias = gerar_excel_divergencias(div_v, so_a_v, so_b_v, div_c, so_a_c, so_b_c)
+        
+        st.download_button(
+            label="📥 Baixar Relatório de Divergências (Excel Detalhado)",
+            data=excel_divergencias,
+            file_name="Divergencias_SPED_vs_SPED.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            help="Baixa um arquivo Excel contendo abas separadas para divergências de valor e omissões."
+        )
 
 # ==============================================================================
 # MODO 3: CONSULTOR DE CLASSIFICAÇÃO
