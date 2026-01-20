@@ -104,6 +104,17 @@ def buscar_descricao_tipi(ncm, df_tipi):
         return str(resultado)
     except: return "Erro ao ler descrição"
 
+# --- FUNÇÃO FORMATAÇÃO NCM (PARA O LINK FUNCIONAR) ---
+def formatar_ncm_pontos(ncm):
+    n = str(ncm).replace('.', '').replace(' ', '').strip()
+    # Formato padrão 8 dígitos: 1234.56.78
+    if len(n) == 8:
+        return f"{n[:4]}.{n[4:6]}.{n[6:]}"
+    # Formato 4 dígitos (Posição): 12.34
+    if len(n) == 4:
+        return f"{n[:2]}.{n[2:]}"
+    return n # Retorna original se não souber formatar
+
 # --- GERAR MODELO EXCEL ---
 def gerar_modelo_excel():
     df_modelo = pd.DataFrame({
@@ -514,6 +525,7 @@ elif modo_app == "🔍 Consultor de Classificação":
             if ncm_input:
                 # Normaliza entrada
                 ncm_limpo = ncm_input.replace('.', '').strip()
+                ncm_formatado_pontos = formatar_ncm_pontos(ncm_limpo)
                 
                 # 1. Busca Descrição na TIPI
                 desc_tipi = buscar_descricao_tipi(ncm_limpo, df_tipi)
@@ -554,10 +566,13 @@ elif modo_app == "🔍 Consultor de Classificação":
                     st.markdown(f"**Descrição TIPI:** {desc_tipi}")
                     st.markdown(f"**Regra Aplicada:** {desc_regra}")
                     st.caption(f"Fonte da Regra: {origem_legal}")
-                    # Links Úteis
+                    # Links Úteis (DEEP LINK NA LEI)
                     link_google = f"https://www.google.com/search?q=NCM+{ncm_limpo}+TIPI"
-                    link_lei = "https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp214.htm"
-                    st.markdown(f"🌐 [Verificar Produto (Google)]({link_google}) | 📜 [Consultar Lei (LC 214)]({link_lei})")
+                    # Constrói o link com scroll para texto (Text Fragment)
+                    link_lei = f"https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp214.htm#:~:text={ncm_formatado_pontos}"
+                    
+                    st.markdown(f"🌐 [Verificar Produto (Google)]({link_google})")
+                    st.markdown(f"📜 [Consultar na Lei (LC 214 - Scroll Automático)]({link_lei})")
                 
             else:
                 st.warning("Digite um NCM para pesquisar.")
@@ -604,10 +619,18 @@ elif modo_app == "🔍 Consultor de Classificação":
                         ncm_val = str(row[col_ncm])
                         cfop_val = str(row[col_cfop]) if col_cfop and pd.notna(row[col_cfop]) else "5102"
                         
+                        # Formata NCM para o link da lei
+                        ncm_limpo = ncm_val.replace('.', '').strip()
+                        ncm_formatado_pontos = formatar_ncm_pontos(ncm_limpo)
+                        
                         row_sim = {'NCM': ncm_val, 'CFOP': cfop_val, 'Valor': 100.0, 'vICMS':0, 'vPIS':0, 'vCOFINS':0}
                         res = motor.classificar_item(row_sim, mapa_lei, df_regras_json, df_tipi, aliq_ibs/100, aliq_cbs/100)
                         desc_tipi = buscar_descricao_tipi(ncm_val, df_tipi)
                         
+                        # AQUI: GERAMOS O LINK DA LEI PARA O EXCEL (SEM GOOGLE)
+                        link_lei = f"https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp214.htm#:~:text={ncm_formatado_pontos}"
+                        
+                        # Para a tela, podemos mostrar o Google se quiser, mas para o Excel vai o da Lei
                         link_google = f"https://www.google.com/search?q=NCM+{ncm_val}+TIPI"
                         
                         resultados_lote.append({
@@ -618,7 +641,8 @@ elif modo_app == "🔍 Consultor de Classificação":
                             'cClassTrib': res[0],
                             'Regra Aplicada': res[1],
                             'Status Tributário': res[2],
-                            'Link Conferência': link_google
+                            'Link Conferência (Google)': link_google, # Vai aparecer na tela
+                            'Link Legislação (LC 214)': link_lei      # Vai para o Excel
                         })
                         
                         if idx % 10 == 0: prog_bar.progress((idx + 1) / total)
@@ -626,17 +650,20 @@ elif modo_app == "🔍 Consultor de Classificação":
                     prog_bar.empty()
                     df_resultado = pd.DataFrame(resultados_lote)
                     
+                    # TELA: Mostra Link do Google (Mais visual para auditoria rápida)
                     st.dataframe(
-                        df_resultado,
+                        df_resultado.drop(columns=['Link Legislação (LC 214)']), # Esconde o da lei na tela pra não poluir
                         column_config={
-                            "Link Conferência": st.column_config.LinkColumn(
-                                "🔍 Validar",
-                                display_text="Ver na Web"
+                            "Link Conferência (Google)": st.column_config.LinkColumn(
+                                "🔍 Validar (Web)", display_text="Ver no Google"
                             )
                         }
                     )
                     
-                    csv = df_resultado.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
+                    # EXCEL: Apenas Link da Lei (Limpo e Direto)
+                    df_export = df_resultado.drop(columns=['Link Conferência (Google)'])
+                    
+                    csv = df_export.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
                     st.download_button("📥 Baixar Resultado (CSV)", csv, "Resultado_Classificacao.csv", "text/csv")
                     
                 else:
