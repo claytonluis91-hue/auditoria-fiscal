@@ -104,16 +104,12 @@ def buscar_descricao_tipi(ncm, df_tipi):
         return str(resultado)
     except: return "Erro ao ler descrição"
 
-# --- FUNÇÃO FORMATAÇÃO NCM (PARA O LINK FUNCIONAR) ---
+# --- FUNÇÃO FORMATAÇÃO NCM ---
 def formatar_ncm_pontos(ncm):
     n = str(ncm).replace('.', '').replace(' ', '').strip()
-    # Formato padrão 8 dígitos: 1234.56.78
-    if len(n) == 8:
-        return f"{n[:4]}.{n[4:6]}.{n[6:]}"
-    # Formato 4 dígitos (Posição): 12.34
-    if len(n) == 4:
-        return f"{n[:2]}.{n[2:]}"
-    return n # Retorna original se não souber formatar
+    if len(n) == 8: return f"{n[:4]}.{n[4:6]}.{n[6:]}"
+    if len(n) == 4: return f"{n[:2]}.{n[2:]}"
+    return n
 
 # --- GERAR MODELO EXCEL ---
 def gerar_modelo_excel():
@@ -125,6 +121,17 @@ def gerar_modelo_excel():
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df_modelo.to_excel(writer, index=False, sheet_name='Modelo_Importacao')
+    return output.getvalue()
+
+# --- FUNÇÃO PARA GERAR EXCEL COM LINKS BONITOS (NOVA!) ---
+def gerar_excel_final_com_links(df_para_excel):
+    output = io.BytesIO()
+    # Usa o engine xlsxwriter que lida melhor com fórmulas
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df_para_excel.to_excel(writer, index=False, sheet_name='Classificacao_Fiscal')
+        # Ajuste automático de colunas (Opcional, mas fica chique)
+        worksheet = writer.sheets['Classificacao_Fiscal']
+        worksheet.set_column('A:Z', 20) 
     return output.getvalue()
 
 # --- COMPARAÇÃO SPED ---
@@ -627,10 +634,14 @@ elif modo_app == "🔍 Consultor de Classificação":
                         res = motor.classificar_item(row_sim, mapa_lei, df_regras_json, df_tipi, aliq_ibs/100, aliq_cbs/100)
                         desc_tipi = buscar_descricao_tipi(ncm_val, df_tipi)
                         
-                        # AQUI: GERAMOS O LINK DA LEI PARA O EXCEL (SEM GOOGLE)
+                        # -------------------------------------------------------------
+                        # AQUI ESTÁ A MÁGICA DO LINK BONITO (FÓRMULA EXCEL)
+                        # -------------------------------------------------------------
                         link_lei = f"https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp214.htm#:~:text={ncm_formatado_pontos}"
+                        # A fórmula: =HYPERLINK("http://...", "Nome Bonito")
+                        formula_excel = f'=HYPERLINK("{link_lei}", "📜 Base Legal")'
                         
-                        # Para a tela, podemos mostrar o Google se quiser, mas para o Excel vai o da Lei
+                        # Link Google (Para tela do app apenas)
                         link_google = f"https://www.google.com/search?q=NCM+{ncm_val}+TIPI"
                         
                         resultados_lote.append({
@@ -641,8 +652,8 @@ elif modo_app == "🔍 Consultor de Classificação":
                             'cClassTrib': res[0],
                             'Regra Aplicada': res[1],
                             'Status Tributário': res[2],
-                            'Link Conferência (Google)': link_google, # Vai aparecer na tela
-                            'Link Legislação (LC 214)': link_lei      # Vai para o Excel
+                            'Link Conferência (Google)': link_google, # Para a Tela do Streamlit
+                            'Base Legal (Clique Aqui)': formula_excel # Para o Excel (Fórmula)
                         })
                         
                         if idx % 10 == 0: prog_bar.progress((idx + 1) / total)
@@ -650,9 +661,9 @@ elif modo_app == "🔍 Consultor de Classificação":
                     prog_bar.empty()
                     df_resultado = pd.DataFrame(resultados_lote)
                     
-                    # TELA: Mostra Link do Google (Mais visual para auditoria rápida)
+                    # TELA: Mostra Link do Google 
                     st.dataframe(
-                        df_resultado.drop(columns=['Link Legislação (LC 214)']), # Esconde o da lei na tela pra não poluir
+                        df_resultado.drop(columns=['Base Legal (Clique Aqui)']), 
                         column_config={
                             "Link Conferência (Google)": st.column_config.LinkColumn(
                                 "🔍 Validar (Web)", display_text="Ver no Google"
@@ -660,11 +671,18 @@ elif modo_app == "🔍 Consultor de Classificação":
                         }
                     )
                     
-                    # EXCEL: Apenas Link da Lei (Limpo e Direto)
+                    # EXCEL: Remove coluna do Google e mantém a fórmula
                     df_export = df_resultado.drop(columns=['Link Conferência (Google)'])
                     
-                    csv = df_export.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
-                    st.download_button("📥 Baixar Resultado (CSV)", csv, "Resultado_Classificacao.csv", "text/csv")
+                    # GERA O ARQUIVO EXCEL COM A NOVA FUNÇÃO
+                    excel_data = gerar_excel_final_com_links(df_export)
+                    
+                    st.download_button(
+                        label="📥 Baixar Resultado (Excel Profissional)", 
+                        data=excel_data, 
+                        file_name="Resultado_Classificacao.xlsx", 
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
                     
                 else:
                     st.error("Não encontrei a coluna 'NCM'. Verifique o cabeçalho.")
