@@ -2,6 +2,6 @@ streamlit
 pandas
 openpyxl
 requests
-
+xlsxwriter
 beautifulsoup4
 fpdf2
