@@ -5,20 +5,22 @@ import requests
 import os
 import re
 import io
+import zipfile
 
 # --- 1. MAPA DE INTELIGÊNCIA (CSTs) ---
 MAPA_CST_CORRETO = {
     "200003": "200", "200004": "200", "200005": "200", 
-    "200010": "200", "200014": "200", # 200009 (Anexo XIV) REMOVIDO
+    "200010": "200", "200014": "200",
     "200022": "200", "200030": "200", "200032": "200", 
     "200034": "200", "200035": "200",
     "000001": "000", "410004": "410", 
     "000002": "000", "000003": "000", "010001": "010", "011001": "011",
-    "200001": "200", "200002": "200", "400001": "400", "410001": "410"
+    "200001": "200", "200002": "200", "400001": "400", "410001": "410",
+    "400001": "400", "550001": "550", "550020": "550",
+    "510001": "510", "620001": "620"
 }
 
-# --- 2. DADOS E REGRAS (TEXTO MESTRA) ---
-# REMOVIDO O BLOCO ANEXO XIV (3004 3002)
+# --- 2. CONFIGURAÇÃO TRIBUTÁRIA E DADOS ---
 TEXTO_MESTRA = """
 ANEXO I (ZERO)
 1006.20 1006.30 1006.40.00 0401.10.10 0401.10.90 0401.20.10 0401.20.90 0401.40.10 0401.50.10
@@ -42,8 +44,6 @@ ANEXO XV (ZERO)
 0407.2 0701 0702 0703 0704 0705 0706 0708 0709 0710 0803 0804 0805 0806 0807 0808 0809 0810 0811 0714 0801
 """
 
-# --- 3. CONFIGURAÇÃO TRIBUTÁRIA ---
-# REMOVIDO O DICIONÁRIO "ANEXO XIV"
 CONFIG_ANEXOS = {
     "ANEXO I":   {"Descricao": "Cesta Básica Nacional", "cClassTrib": "200003", "Reducao": 1.0, "CST_Default": "200", "Status": "ZERO (Anexo I)", "Caps": []},
     "ANEXO IV":  {"Descricao": "Dispositivos Médicos", "cClassTrib": "200005", "Reducao": 0.6, "CST_Default": "200", "Status": "REDUZIDA 60% (Anexo IV)", "Caps": ["30","90"]},
@@ -54,6 +54,7 @@ CONFIG_ANEXOS = {
 }
 
 def carregar_tipi(uploaded_file=None):
+    # Lógica de carregamento TIPI (mantida)
     arquivo = uploaded_file if uploaded_file else ("tipi.xlsx" if os.path.exists("tipi.xlsx") else None)
     if not arquivo: return pd.DataFrame()
     try:
@@ -76,6 +77,7 @@ def carregar_json_regras():
     except: return pd.DataFrame(columns=['Busca'])
 
 def extrair_regras(texto_fonte, mapa_existente, nome_fonte):
+    # Lógica de extração de NCMs do texto (mantida)
     texto = re.sub(r'\s+', ' ', texto_fonte)
     anexos_pos = []
     for anexo in CONFIG_ANEXOS.keys():
@@ -99,10 +101,6 @@ def extrair_regras(texto_fonte, mapa_existente, nome_fonte):
 
 def carregar_base_legal():
     mapa = {}
-    try:
-        url = "https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp214.htm"
-        pass
-    except: pass
     mapa = extrair_regras(TEXTO_MESTRA, mapa, "BACKUP")
     caps_anexo_vii = ['10', '11', '12'] 
     for cap in caps_anexo_vii:
@@ -126,17 +124,21 @@ def obter_cst_final(c_class_trib, df_json):
                 return str(match.iloc[0][col_cst]).strip()
     return '000'
 
+# --- MOTOR PRINCIPAL DE CLASSIFICAÇÃO (PARA VALIDAR) ---
 def classificar_item(row, mapa_regras, df_json, df_tipi, aliq_ibs, aliq_cbs):
     ncm = str(row['NCM']).replace('.', '')
-    cfop = str(row['CFOP']).replace('.', '') if 'CFOP' in row else '0000'
+    cfop_raw = str(row['CFOP']).replace('.', '') if 'CFOP' in row else '0000'
+    cfop = cfop_raw
     valor_prod = float(row.get('Valor', 0.0))
     tipo_op = row.get('Tipo', 'SAIDA')
     
+    # Carga Atual
     v_icms = float(row.get('vICMS', 0))
     v_pis = float(row.get('vPIS', 0))
     v_cofins = float(row.get('vCOFINS', 0))
     imposto_atual = v_icms + v_pis + v_cofins
     
+    # Base Padrão
     base_liquida = max(0, valor_prod - imposto_atual)
     ibs_padrao = base_liquida * aliq_ibs
     cbs_padrao = base_liquida * aliq_cbs
@@ -144,18 +146,19 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliq_ibs, aliq_cbs):
     v_cbs = cbs_padrao
     
     validacao = "⚠️ NCM Ausente (TIPI)"
-    if ncm == 'SEM_DETALHE':
-        validacao = "ℹ️ SPED Perfil B"
+    if ncm == 'SEM_DETALHE': validacao = "ℹ️ SPED Perfil B"
     elif not df_tipi.empty:
         if ncm in df_tipi.index: validacao = "✅ NCM Válido"
         elif ncm[:4] in df_tipi.index: validacao = "✅ Posição Válida"
 
+    # Definição de Grupos CFOP
     cfops_bonificacao = ['1910', '2910', '5910', '6910']
     cfops_amostra = ['1911', '2911', '5911', '6911', '5912', '6912', '5913', '6913']
     cfops_suspensao = ['5901', '6901', '5902', '6902', '5915', '6915', '5916', '6916']
     cfops_zfm = ['5109', '6109', '5110', '6110']
     cfops_export = ['7101', '7102', '7127', '7501', '7930', '7949'] 
 
+    # Variáveis Padrão
     cClassTrib = '000001'
     desc_final = 'Padrão - Tributação Integral'
     status_final = 'PADRAO'
@@ -164,6 +167,7 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliq_ibs, aliq_cbs):
     v_ibs_final = ibs_padrao
     v_cbs_final = cbs_padrao
 
+    # Passo 1: NCM
     anexo_encontrado = None
     for tent in [ncm, ncm[:6], ncm[:4], ncm[:2]]:
         if tent in mapa_regras:
@@ -181,7 +185,7 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliq_ibs, aliq_cbs):
         v_cbs_final = cbs_padrao * (1 - fator)
         cst_final = obter_cst_final(cClassTrib, df_json)
 
-    # SOBRESCRITA POR CFOP
+    # Passo 2: Sobrescrita CFOP
     if cfop in cfops_zfm:
         cClassTrib = '200022' 
         desc_final = f"Venda Incentivada ZFM (Lei Comp. 214/2025)"
@@ -227,7 +231,7 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliq_ibs, aliq_cbs):
         v_ibs_final = 0.0
         v_cbs_final = 0.0
 
-    # CRÉDITO DE ENTRADA (Uso e Consumo)
+    # Crédito Entrada
     cfop_base = cfop[1:]
     eh_uso_consumo = cfop_base in ['556', '407', '551', '406']
     if tipo_op == 'ENTRADA' and eh_uso_consumo:
@@ -247,6 +251,7 @@ def extrair_nome_empresa_xml(tree, ns):
         if xNome is not None: return xNome.text
     return "Empresa Desconhecida"
 
+# --- FUNÇÃO ATUALIZADA: EXTRAI DADOS XML (INCLUINDO NOVAS TAGS REFORMA) ---
 def processar_xml_detalhado(tree, ns, tipo_op='SAIDA'):
     lista = []
     root = tree.getroot()
@@ -263,20 +268,49 @@ def processar_xml_detalhado(tree, ns, tipo_op='SAIDA'):
 
     for det in root.findall('.//ns:det', ns):
         prod = det.find('ns:prod', ns)
+        imposto = det.find('ns:imposto', ns)
+        
+        # Dados Básicos
         c_prod = prod.find('ns:cProd', ns).text
+        ncm = prod.find('ns:NCM', ns).text
+        xProd = prod.find('ns:xProd', ns).text
+        cfop = prod.find('ns:CFOP', ns).text
+        valor = float(prod.find('ns:vProd', ns).text)
+        
+        # Tags Padrão (ICMS/PIS/COFINS)
         v_icms = 0.0; v_pis = 0.0; v_cofins = 0.0
-        imposto_node = det.find('ns:imposto', ns)
-        if imposto_node is not None:
-            for child in imposto_node.iter():
+        if imposto is not None:
+            for child in imposto.iter():
                 tag_name = child.tag.split('}')[-1] 
                 if tag_name in ['vICMS', 'vICMSSN']: v_icms += float(child.text)
                 elif tag_name == 'vPIS': v_pis += float(child.text)
                 elif tag_name == 'vCOFINS': v_cofins += float(child.text)
+        
+        # --- EXTRAÇÃO TAGS DA REFORMA (Teste) ---
+        # Como o layout oficial não é fixo, buscamos recursivamente por tags prováveis
+        xml_cClass = None
+        xml_vIBS = 0.0
+        xml_vCBS = 0.0
+        
+        # Busca genérica por nome da tag em todo o item (pode estar em <imposto> ou <obsFisco>)
+        for elem in det.iter():
+            tag_limpa = elem.tag.split('}')[-1].lower()
+            if tag_limpa == 'cclasstrib': xml_cClass = elem.text
+            elif tag_limpa == 'vibs': 
+                try: xml_vIBS = float(elem.text)
+                except: pass
+            elif tag_limpa == 'vcbs': 
+                try: xml_vCBS = float(elem.text)
+                except: pass
+
         lista.append({
             'Cód. Produto': c_prod, 'Chave NFe': chave, 'Num NFe': num_nfe,
-            'NCM': prod.find('ns:NCM', ns).text,
-            'Produto': prod.find('ns:xProd', ns).text, 'CFOP': prod.find('ns:CFOP', ns).text,
-            'Valor': float(prod.find('ns:vProd', ns).text), 'vICMS': v_icms, 'vPIS': v_pis, 'vCOFINS': v_cofins, 'Tipo': tipo_op
+            'NCM': ncm, 'Produto': xProd, 'CFOP': cfop, 'Valor': valor,
+            'vICMS': v_icms, 'vPIS': v_pis, 'vCOFINS': v_cofins, 'Tipo': tipo_op,
+            # Campos XML Reforma
+            'XML_cClass': xml_cClass if xml_cClass else 'Não Informado',
+            'XML_vIBS': xml_vIBS,
+            'XML_vCBS': xml_vCBS
         })
     return lista
 
@@ -364,3 +398,18 @@ def processar_sped_fiscal(arquivo):
 
     fechar_nota(nota_atual, buffer_itens, usou_c170)
     return nome_empresa, vendas, compras
+
+# --- PROCESSADOR DE ZIP XML (NOVO!) ---
+def processar_zip_xml(zip_file, ns):
+    lista_final = []
+    with zipfile.ZipFile(zip_file) as z:
+        for filename in z.namelist():
+            if filename.lower().endswith('.xml'):
+                try:
+                    with z.open(filename) as f:
+                        tree = ET.parse(f)
+                        # Processa como SAIDA (Validação geralmente é de emissão própria)
+                        itens = processar_xml_detalhado(tree, ns, 'SAIDA')
+                        lista_final.extend(itens)
+                except: pass
+    return lista_final
