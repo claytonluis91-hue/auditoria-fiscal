@@ -6,19 +6,19 @@ import os
 import re
 import io
 
-# --- 1. MAPA DE INTELIGÊNCIA (CSTs Baseados no JSON) ---
+# --- 1. MAPA DE INTELIGÊNCIA (CSTs) ---
 MAPA_CST_CORRETO = {
     "200003": "200", "200004": "200", "200005": "200", 
-    "200009": "200", "200010": "200", "200014": "200",
+    "200010": "200", "200014": "200", # 200009 (Anexo XIV) REMOVIDO
     "200022": "200", "200030": "200", "200032": "200", 
     "200034": "200", "200035": "200",
-    "000001": "000", "000002": "000", "000003": "000",
-    "410001": "410", "410003": "410", "410004": "410", "410999": "410",
-    "400001": "400", "550001": "550", "550020": "550",
-    "510001": "510", "620001": "620"
+    "000001": "000", "410004": "410", 
+    "000002": "000", "000003": "000", "010001": "010", "011001": "011",
+    "200001": "200", "200002": "200", "400001": "400", "410001": "410"
 }
 
-# --- 2. DADOS E REGRAS (MANTIDOS) ---
+# --- 2. DADOS E REGRAS (TEXTO MESTRA) ---
+# REMOVIDO O BLOCO ANEXO XIV (3004 3002)
 TEXTO_MESTRA = """
 ANEXO I (ZERO)
 1006.20 1006.30 1006.40.00 0401.10.10 0401.10.90 0401.20.10 0401.20.90 0401.40.10 0401.50.10
@@ -38,20 +38,18 @@ Capítulo 10 Capítulo 12 Capítulo 07 Capítulo 08
 ANEXO VIII (RED 60%)
 3401 3306 9603.21.00 4818.10.00 9619.00.00
 
-ANEXO XIV (ZERO)
-3004 3002
-
 ANEXO XV (ZERO)
 0407.2 0701 0702 0703 0704 0705 0706 0708 0709 0710 0803 0804 0805 0806 0807 0808 0809 0810 0811 0714 0801
 """
 
+# --- 3. CONFIGURAÇÃO TRIBUTÁRIA ---
+# REMOVIDO O DICIONÁRIO "ANEXO XIV"
 CONFIG_ANEXOS = {
     "ANEXO I":   {"Descricao": "Cesta Básica Nacional", "cClassTrib": "200003", "Reducao": 1.0, "CST_Default": "200", "Status": "ZERO (Anexo I)", "Caps": []},
     "ANEXO IV":  {"Descricao": "Dispositivos Médicos", "cClassTrib": "200005", "Reducao": 0.6, "CST_Default": "200", "Status": "REDUZIDA 60% (Anexo IV)", "Caps": ["30","90"]},
     "ANEXO VII": {"Descricao": "Alimentos Reduzidos", "cClassTrib": "200034", "Reducao": 0.6, "CST_Default": "200", "Status": "REDUZIDA 60% (Anexo VII)", "Caps": ["03","04","07","08","10","11","12","15","16","19","20","21","22"]},
     "ANEXO VIII":{"Descricao": "Higiene Pessoal/Limp", "cClassTrib": "200035", "Reducao": 0.6, "CST_Default": "200", "Status": "REDUZIDA 60% (Anexo VIII)", "Caps": ["33","34","48","96"]},
     "ANEXO XII": {"Descricao": "Dispositivos Médicos (Z)", "cClassTrib": "200004", "Reducao": 1.0, "CST_Default": "200", "Status": "ZERO (Anexo XII)", "Caps": ["90"]},
-    "ANEXO XIV": {"Descricao": "Medicamentos (Zero)", "cClassTrib": "200009", "Reducao": 1.0, "CST_Default": "200", "Status": "ZERO (Anexo XIV)", "Caps": ["30"]},
     "ANEXO XV":  {"Descricao": "Hortifruti e Ovos", "cClassTrib": "200014", "Reducao": 1.0, "CST_Default": "200", "Status": "ZERO (Anexo XV)", "Caps": ["04","06","07","08"]}
 }
 
@@ -101,6 +99,10 @@ def extrair_regras(texto_fonte, mapa_existente, nome_fonte):
 
 def carregar_base_legal():
     mapa = {}
+    try:
+        url = "https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp214.htm"
+        pass
+    except: pass
     mapa = extrair_regras(TEXTO_MESTRA, mapa, "BACKUP")
     caps_anexo_vii = ['10', '11', '12'] 
     for cap in caps_anexo_vii:
@@ -126,9 +128,7 @@ def obter_cst_final(c_class_trib, df_json):
 
 def classificar_item(row, mapa_regras, df_json, df_tipi, aliq_ibs, aliq_cbs):
     ncm = str(row['NCM']).replace('.', '')
-    cfop_raw = str(row['CFOP']).replace('.', '') if 'CFOP' in row else '0000'
-    cfop = cfop_raw
-    
+    cfop = str(row['CFOP']).replace('.', '') if 'CFOP' in row else '0000'
     valor_prod = float(row.get('Valor', 0.0))
     tipo_op = row.get('Tipo', 'SAIDA')
     
@@ -140,9 +140,12 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliq_ibs, aliq_cbs):
     base_liquida = max(0, valor_prod - imposto_atual)
     ibs_padrao = base_liquida * aliq_ibs
     cbs_padrao = base_liquida * aliq_cbs
+    v_ibs = ibs_padrao
+    v_cbs = cbs_padrao
     
     validacao = "⚠️ NCM Ausente (TIPI)"
-    if ncm == 'SEM_DETALHE': validacao = "ℹ️ SPED Perfil B"
+    if ncm == 'SEM_DETALHE':
+        validacao = "ℹ️ SPED Perfil B"
     elif not df_tipi.empty:
         if ncm in df_tipi.index: validacao = "✅ NCM Válido"
         elif ncm[:4] in df_tipi.index: validacao = "✅ Posição Válida"
@@ -178,6 +181,7 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliq_ibs, aliq_cbs):
         v_cbs_final = cbs_padrao * (1 - fator)
         cst_final = obter_cst_final(cClassTrib, df_json)
 
+    # SOBRESCRITA POR CFOP
     if cfop in cfops_zfm:
         cClassTrib = '200022' 
         desc_final = f"Venda Incentivada ZFM (Lei Comp. 214/2025)"
@@ -223,6 +227,7 @@ def classificar_item(row, mapa_regras, df_json, df_tipi, aliq_ibs, aliq_cbs):
         v_ibs_final = 0.0
         v_cbs_final = 0.0
 
+    # CRÉDITO DE ENTRADA (Uso e Consumo)
     cfop_base = cfop[1:]
     eh_uso_consumo = cfop_base in ['556', '407', '551', '406']
     if tipo_op == 'ENTRADA' and eh_uso_consumo:
@@ -247,7 +252,7 @@ def processar_xml_detalhado(tree, ns, tipo_op='SAIDA'):
     root = tree.getroot()
     infNFe = root.find('.//ns:infNFe', ns)
     chave = 'N/A'
-    num_nfe = 'N/A' # NOVO: Captura Número
+    num_nfe = 'N/A'
     
     if infNFe is not None:
         chave = infNFe.attrib.get('Id', '')[3:]
@@ -268,7 +273,7 @@ def processar_xml_detalhado(tree, ns, tipo_op='SAIDA'):
                 elif tag_name == 'vPIS': v_pis += float(child.text)
                 elif tag_name == 'vCOFINS': v_cofins += float(child.text)
         lista.append({
-            'Cód. Produto': c_prod, 'Chave NFe': chave, 'Num NFe': num_nfe, # Adicionado
+            'Cód. Produto': c_prod, 'Chave NFe': chave, 'Num NFe': num_nfe,
             'NCM': prod.find('ns:NCM', ns).text,
             'Produto': prod.find('ns:xProd', ns).text, 'CFOP': prod.find('ns:CFOP', ns).text,
             'Valor': float(prod.find('ns:vProd', ns).text), 'vICMS': v_icms, 'vPIS': v_pis, 'vCOFINS': v_cofins, 'Tipo': tipo_op
@@ -324,7 +329,7 @@ def processar_sped_fiscal(arquivo):
             if cod_sit in ['00', '01', '1', '06', '6']: 
                 ind_oper = campos[2]
                 chave = campos[9] if len(campos) > 9 else f"DOC_{campos[8]}"
-                num_nfe = campos[8] # Captura Campo 08 (NUM_DOC)
+                num_nfe = campos[8]
                 nota_atual = {
                     'Tipo': 'SAIDA' if ind_oper == '1' else 'ENTRADA',
                     'Chave': chave,
