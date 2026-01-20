@@ -27,7 +27,7 @@ def init_df(key, columns=None):
             st.session_state[key] = pd.DataFrame()
 
 # Inicializa DataFrames com colunas essenciais
-cols_padrao = ['Chave NFe', 'Num NFe', 'Valor', 'Produto', 'NCM'] # ADICIONADO Num NFe
+cols_padrao = ['Chave NFe', 'Num NFe', 'Valor', 'Produto', 'NCM']
 init_df('xml_vendas_df', cols_padrao)
 init_df('xml_compras_df', cols_padrao)
 init_df('sped_vendas_df', cols_padrao)
@@ -116,13 +116,11 @@ def gerar_modelo_excel():
         df_modelo.to_excel(writer, index=False, sheet_name='Modelo_Importacao')
     return output.getvalue()
 
-# --- FUNÇÃO DE COMPARAÇÃO AVANÇADA COM NFe ---
+# --- COMPARAÇÃO SPED ---
 def comparar_speds_avancado(df_a, df_b, label_a="SPED A", label_b="SPED B"):
-    # Agrupa por Chave, Num NFe e CFOP
-    cols_group = ['Chave NFe', 'Num NFe', 'CFOP'] # Adicionado Num NFe
+    cols_group = ['Chave NFe', 'Num NFe', 'CFOP'] 
     cols_sum = ['Valor', 'vICMS', 'vPIS', 'vCOFINS']
     
-    # Garante colunas numéricas e strings
     if 'Num NFe' not in df_a.columns: df_a['Num NFe'] = 'N/A'
     if 'Num NFe' not in df_b.columns: df_b['Num NFe'] = 'N/A'
     
@@ -133,11 +131,9 @@ def comparar_speds_avancado(df_a, df_b, label_a="SPED A", label_b="SPED B"):
         if col in df_a.columns: df_a[col] = pd.to_numeric(df_a[col], errors='coerce').fillna(0)
         if col in df_b.columns: df_b[col] = pd.to_numeric(df_b[col], errors='coerce').fillna(0)
 
-    # Agrupa
     g_a = df_a.groupby(cols_group)[cols_sum].sum().reset_index()
     g_b = df_b.groupby(cols_group)[cols_sum].sum().reset_index()
     
-    # Merge (Cruzamento)
     merged = pd.merge(
         g_a, g_b, 
         on=['Chave NFe', 'Num NFe', 'CFOP'], 
@@ -146,30 +142,21 @@ def comparar_speds_avancado(df_a, df_b, label_a="SPED A", label_b="SPED B"):
         indicator=True
     )
     
-    # Analisa Resultados
     merged['Dif_Valor'] = merged['Valor_A'].fillna(0) - merged['Valor_B'].fillna(0)
     merged['Dif_ICMS'] = merged['vICMS_A'].fillna(0) - merged['vICMS_B'].fillna(0)
     
-    # 1. Divergência de Valores
-    div_valor = merged[
-        (merged['_merge'] == 'both') & 
-        (abs(merged['Dif_Valor']) > 0.05)
-    ].copy()
-    
-    # 2. Omissões
+    div_valor = merged[(merged['_merge'] == 'both') & (abs(merged['Dif_Valor']) > 0.05)].copy()
     so_a = merged[merged['_merge'] == 'left_only'].copy()
     so_b = merged[merged['_merge'] == 'right_only'].copy()
     
     return div_valor, so_a, so_b, len(g_a), len(g_b)
 
-# --- GERAR EXCEL DE DIVERGÊNCIAS ---
 def gerar_excel_divergencias(div_v, so_a_v, so_b_v, div_c, so_a_c, so_b_c):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         if not div_v.empty: div_v.to_excel(writer, sheet_name='Div_Valor_Vendas', index=False)
         if not so_a_v.empty: so_a_v.to_excel(writer, sheet_name='Falta_no_ERP_Vendas', index=False)
         if not so_b_v.empty: so_b_v.to_excel(writer, sheet_name='Falta_no_Cliente_Vendas', index=False)
-        
         if not div_c.empty: div_c.to_excel(writer, sheet_name='Div_Valor_Compras', index=False)
         if not so_a_c.empty: so_a_c.to_excel(writer, sheet_name='Falta_no_ERP_Compras', index=False)
         if not so_b_c.empty: so_b_c.to_excel(writer, sheet_name='Falta_no_Cliente_Compras', index=False)
@@ -390,7 +377,7 @@ if modo_app == "📊 Auditoria & Reforma":
 
 
 # ==============================================================================
-# MODO 2: COMPARADOR SPED VS SPED (NOVO MOTOR DE COMPARAÇÃO)
+# MODO 2: COMPARADOR SPED VS SPED
 # ==============================================================================
 elif modo_app == "⚔️ Comparador SPED vs SPED":
     st.markdown("""
@@ -491,10 +478,7 @@ elif modo_app == "⚔️ Comparador SPED vs SPED":
 
         # 3. DOWNLOAD
         st.markdown("---")
-        
-        # Gera o Excel consolidado com todas as abas
         excel_divergencias = gerar_excel_divergencias(div_v, so_a_v, so_b_v, div_c, so_a_c, so_b_c)
-        
         st.download_button(
             label="📥 Baixar Relatório de Divergências (Excel Detalhado)",
             data=excel_divergencias,
@@ -570,6 +554,10 @@ elif modo_app == "🔍 Consultor de Classificação":
                     st.markdown(f"**Descrição TIPI:** {desc_tipi}")
                     st.markdown(f"**Regra Aplicada:** {desc_regra}")
                     st.caption(f"Fonte da Regra: {origem_legal}")
+                    # Links Úteis
+                    link_google = f"https://www.google.com/search?q=NCM+{ncm_limpo}+TIPI"
+                    link_lei = "https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp214.htm"
+                    st.markdown(f"🌐 [Verificar Produto (Google)]({link_google}) | 📜 [Consultar Lei (LC 214)]({link_lei})")
                 
             else:
                 st.warning("Digite um NCM para pesquisar.")
@@ -620,6 +608,8 @@ elif modo_app == "🔍 Consultor de Classificação":
                         res = motor.classificar_item(row_sim, mapa_lei, df_regras_json, df_tipi, aliq_ibs/100, aliq_cbs/100)
                         desc_tipi = buscar_descricao_tipi(ncm_val, df_tipi)
                         
+                        link_google = f"https://www.google.com/search?q=NCM+{ncm_val}+TIPI"
+                        
                         resultados_lote.append({
                             'NCM Original': ncm_val,
                             'CFOP': cfop_val,
@@ -627,14 +617,24 @@ elif modo_app == "🔍 Consultor de Classificação":
                             'Novo CST': res[3],
                             'cClassTrib': res[0],
                             'Regra Aplicada': res[1],
-                            'Status Tributário': res[2]
+                            'Status Tributário': res[2],
+                            'Link Conferência': link_google
                         })
                         
                         if idx % 10 == 0: prog_bar.progress((idx + 1) / total)
                     
                     prog_bar.empty()
                     df_resultado = pd.DataFrame(resultados_lote)
-                    st.dataframe(df_resultado)
+                    
+                    st.dataframe(
+                        df_resultado,
+                        column_config={
+                            "Link Conferência": st.column_config.LinkColumn(
+                                "🔍 Validar",
+                                display_text="Ver na Web"
+                            )
+                        }
+                    )
                     
                     csv = df_resultado.to_csv(index=False, sep=';', encoding='utf-8-sig').encode('utf-8-sig')
                     st.download_button("📥 Baixar Resultado (CSV)", csv, "Resultado_Classificacao.csv", "text/csv")
