@@ -20,7 +20,8 @@ MAPA_CST_CORRETO = {
     "510001": "510", "620001": "620"
 }
 
-# --- 2. CONFIGURAÇÃO TRIBUTÁRIA E DADOS ---
+# --- 2. CONFIGURAÇÃO TRIBUTÁRIA (MANTIDA IGUAL) ---
+# ... (Mantenha o TEXTO_MESTRA e CONFIG_ANEXOS como estão, não mudaram) ...
 TEXTO_MESTRA = """
 ANEXO I (ZERO)
 1006.20 1006.30 1006.40.00 0401.10.10 0401.10.90 0401.20.10 0401.20.90 0401.40.10 0401.50.10
@@ -124,7 +125,6 @@ def obter_cst_final(c_class_trib, df_json):
                 return str(match.iloc[0][col_cst]).strip()
     return '000'
 
-# --- MOTOR PRINCIPAL DE CLASSIFICAÇÃO (PARA VALIDAR) ---
 def classificar_item(row, mapa_regras, df_json, df_tipi, aliq_ibs, aliq_cbs):
     ncm = str(row['NCM']).replace('.', '')
     cfop_raw = str(row['CFOP']).replace('.', '') if 'CFOP' in row else '0000'
@@ -251,7 +251,7 @@ def extrair_nome_empresa_xml(tree, ns):
         if xNome is not None: return xNome.text
     return "Empresa Desconhecida"
 
-# --- FUNÇÃO ATUALIZADA: EXTRAI DADOS XML (INCLUINDO NOVAS TAGS REFORMA) ---
+# --- LEITURA DE XML (COM TAGS DA REFORMA) ---
 def processar_xml_detalhado(tree, ns, tipo_op='SAIDA'):
     lista = []
     root = tree.getroot()
@@ -270,14 +270,12 @@ def processar_xml_detalhado(tree, ns, tipo_op='SAIDA'):
         prod = det.find('ns:prod', ns)
         imposto = det.find('ns:imposto', ns)
         
-        # Dados Básicos
         c_prod = prod.find('ns:cProd', ns).text
         ncm = prod.find('ns:NCM', ns).text
         xProd = prod.find('ns:xProd', ns).text
         cfop = prod.find('ns:CFOP', ns).text
         valor = float(prod.find('ns:vProd', ns).text)
         
-        # Tags Padrão (ICMS/PIS/COFINS)
         v_icms = 0.0; v_pis = 0.0; v_cofins = 0.0
         if imposto is not None:
             for child in imposto.iter():
@@ -286,13 +284,9 @@ def processar_xml_detalhado(tree, ns, tipo_op='SAIDA'):
                 elif tag_name == 'vPIS': v_pis += float(child.text)
                 elif tag_name == 'vCOFINS': v_cofins += float(child.text)
         
-        # --- EXTRAÇÃO TAGS DA REFORMA (Teste) ---
-        # Como o layout oficial não é fixo, buscamos recursivamente por tags prováveis
         xml_cClass = None
         xml_vIBS = 0.0
         xml_vCBS = 0.0
-        
-        # Busca genérica por nome da tag em todo o item (pode estar em <imposto> ou <obsFisco>)
         for elem in det.iter():
             tag_limpa = elem.tag.split('}')[-1].lower()
             if tag_limpa == 'cclasstrib': xml_cClass = elem.text
@@ -307,10 +301,8 @@ def processar_xml_detalhado(tree, ns, tipo_op='SAIDA'):
             'Cód. Produto': c_prod, 'Chave NFe': chave, 'Num NFe': num_nfe,
             'NCM': ncm, 'Produto': xProd, 'CFOP': cfop, 'Valor': valor,
             'vICMS': v_icms, 'vPIS': v_pis, 'vCOFINS': v_cofins, 'Tipo': tipo_op,
-            # Campos XML Reforma
             'XML_cClass': xml_cClass if xml_cClass else 'Não Informado',
-            'XML_vIBS': xml_vIBS,
-            'XML_vCBS': xml_vCBS
+            'XML_vIBS': xml_vIBS, 'XML_vCBS': xml_vCBS
         })
     return lista
 
@@ -318,11 +310,13 @@ def to_float(val):
     try: return float(val.replace(',', '.'))
     except: return 0.0
 
-def processar_sped_fiscal(arquivo):
+# --- LEITOR SPED UNIVERSAL (FISCAL E CONTRIBUIÇÕES) ---
+def processar_sped_geral(arquivo):
     vendas = []
     compras = []
     nome_empresa = "Empresa SPED"
     
+    # Decodificação segura
     raw_content = arquivo.getvalue()
     try: conteudo = raw_content.decode('latin-1')
     except: 
@@ -332,22 +326,34 @@ def processar_sped_fiscal(arquivo):
     lines = conteudo.split('\n')
     mapa_produtos = {}
     
+    # 1. VARREDURA INICIAL (CADASTRO 0200)
+    # Funciona igual para SPED Fiscal (EFD ICMS/IPI) e Contribuições (EFD Contribuições)
     for linha in lines:
         if not linha.startswith('|'): continue
         campos = linha.split('|')
-        if campos[1] == '0000' and len(campos) > 6: nome_empresa = campos[6]
-        elif campos[1] == '0200' and len(campos) > 8:
-            mapa_produtos[campos[2]] = {'NCM': campos[8], 'Produto': campos[3]}
+        reg = campos[1]
+        
+        if reg == '0000' and len(campos) > 6:
+            nome_empresa = campos[6] # Razão Social costuma ser o campo 6 em ambos
+            
+        elif reg == '0200' and len(campos) > 8:
+            # |0200|COD_ITEM|DESCR_ITEM|...|NCM|...
+            # Index: 0='', 1='0200', 2=COD, 3=DESCR, ..., 8=NCM (na maioria dos layouts)
+            cod = campos[2]
+            desc = campos[3]
+            # No SPED Fiscal e Contribuições, NCM costuma ser campo 8
+            ncm = campos[8] if len(campos) > 8 else ""
+            mapa_produtos[cod] = {'NCM': ncm, 'Produto': desc}
 
+    # 2. VARREDURA DE MOVIMENTO (C100/C170)
     nota_atual = None
     buffer_itens = []
-    usou_c170 = False
     
-    def fechar_nota(nota, itens, usou_detalhe):
+    def fechar_nota(nota, itens):
         if not nota: return
-        lista_final = [i for i in itens if i['Origem'] == ('C170' if usou_detalhe else 'C190')]
-        if nota['Tipo'] == 'SAIDA': vendas.extend(lista_final)
-        else: compras.extend(lista_final)
+        # Salva itens acumulados
+        if nota['Tipo'] == 'SAIDA': vendas.extend(itens)
+        else: compras.extend(itens)
 
     for linha in lines:
         if not linha.startswith('|'): continue
@@ -355,51 +361,69 @@ def processar_sped_fiscal(arquivo):
         reg = campos[1]
         
         if reg == 'C100':
-            fechar_nota(nota_atual, buffer_itens, usou_c170)
+            fechar_nota(nota_atual, buffer_itens)
             nota_atual = None
             buffer_itens = []
-            usou_c170 = False
-            cod_sit = campos[6]
-            if cod_sit in ['00', '01', '1', '06', '6']: 
-                ind_oper = campos[2]
-                chave = campos[9] if len(campos) > 9 else f"DOC_{campos[8]}"
+            
+            # C100 é comum a ambos, mas campos variam ligeiramente.
+            # O que importa: IND_OPER (Entrada/Saída), NUM_DOC (Número), CHV_NFE (Chave)
+            # EFD Fiscal: IND_OPER=2, NUM_DOC=8, CHV_NFE=9
+            # EFD Contrib: IND_OPER=2, NUM_DOC=8, CHV_NFE=9 (Geralmente compatível)
+            if len(campos) > 9:
+                ind_oper = campos[2] # 0=Entrada, 1=Saída
                 num_nfe = campos[8]
-                nota_atual = {
-                    'Tipo': 'SAIDA' if ind_oper == '1' else 'ENTRADA',
-                    'Chave': chave,
-                    'Num NFe': num_nfe
-                }
+                chave = campos[9] if len(campos) > 9 and len(campos[9]) == 44 else f"DOC_{num_nfe}"
                 
-        elif nota_atual:
-            if reg == 'C170' and len(campos) > 10:
-                usou_c170 = True
+                # Filtra apenas notas regulares (COD_SIT = 00) se o campo existir
+                # No SPED Contribuições, COD_SIT é campo 6 também.
+                cod_sit = campos[6]
+                if cod_sit in ['00', '01', '06']: 
+                    nota_atual = {
+                        'Tipo': 'SAIDA' if ind_oper == '1' else 'ENTRADA',
+                        'Chave': chave,
+                        'Num NFe': num_nfe
+                    }
+
+        elif nota_atual and reg == 'C170':
+            # Itens da Nota
+            # SPED Fiscal: COD_ITEM=3, CFOP=11, VL_ITEM=7
+            # SPED Contrib: COD_ITEM=3, CFOP= (Não tem no C170, herda da nota ou C170 fiscal), VL_ITEM=7
+            # *ATENÇÃO*: EFD Contribuições NÃO TEM campo CFOP no C170 padrão.
+            # Mas vamos tentar pegar o básico.
+            if len(campos) > 7:
                 cod_item = campos[3]
-                dados = mapa_produtos.get(cod_item, {'NCM': '', 'Produto': 'Item Não Cadastrado'})
+                dados = mapa_produtos.get(cod_item, {'NCM': '', 'Produto': f'Item {cod_item}'})
+                
+                valor = to_float(campos[7])
+                cfop = '0000' # Default se não achar
+                
+                # Tenta achar CFOP (Campo 11 no Fiscal)
+                if len(campos) > 11 and len(campos[11]) == 4:
+                    cfop = campos[11]
+                
+                # Tenta pegar tributos se for layout Fiscal (ICMS campo 15)
+                v_icms = to_float(campos[15]) if len(campos) > 15 else 0.0
+                
+                # No Contribuições, PIS/COFINS estão lá pelo campo 25/30+
+                # Vamos simplificar: SPED geralmente serve para pegar a lista de ITENS vendidos.
+                # A auditoria vai recalcular em cima do NCM.
+                
                 buffer_itens.append({
-                    'Cód. Produto': cod_item, 'Chave NFe': nota_atual['Chave'], 'Num NFe': nota_atual['Num NFe'],
-                    'NCM': dados['NCM'], 'Produto': dados['Produto'],
-                    'CFOP': campos[11], 'Valor': to_float(campos[7]),
-                    'vICMS': to_float(campos[15]) if len(campos)>15 else 0.0,
-                    'vPIS': to_float(campos[25]) if len(campos)>25 else 0.0,
-                    'vCOFINS': to_float(campos[26]) if len(campos)>26 else 0.0,
-                    'Tipo': nota_atual['Tipo'], 'Origem': 'C170'
-                })
-            elif reg == 'C190' and len(campos) > 5:
-                cst = campos[2]
-                cfop = campos[3]
-                buffer_itens.append({
-                    'Cód. Produto': 'RESUMO', 'Chave NFe': nota_atual['Chave'], 'Num NFe': nota_atual['Num NFe'],
-                    'NCM': 'SEM_DETALHE',
-                    'Produto': f"Resumo CST {cst} CFOP {cfop}",
-                    'CFOP': cfop, 'Valor': to_float(campos[5]),
-                    'vICMS': to_float(campos[7]), 'vPIS': 0.0, 'vCOFINS': 0.0,
-                    'Tipo': nota_atual['Tipo'], 'Origem': 'C190'
+                    'Cód. Produto': cod_item, 
+                    'Chave NFe': nota_atual['Chave'], 
+                    'Num NFe': nota_atual['Num NFe'],
+                    'NCM': dados['NCM'], 
+                    'Produto': dados['Produto'],
+                    'CFOP': cfop, 
+                    'Valor': valor,
+                    'vICMS': v_icms, 'vPIS': 0.0, 'vCOFINS': 0.0,
+                    'Tipo': nota_atual['Tipo']
                 })
 
-    fechar_nota(nota_atual, buffer_itens, usou_c170)
+    fechar_nota(nota_atual, buffer_itens)
     return nome_empresa, vendas, compras
 
-# --- PROCESSADOR DE ZIP XML (NOVO!) ---
+# --- PROCESSADOR DE ZIP XML (MANTIDO) ---
 def processar_zip_xml(zip_file, ns):
     lista_final = []
     with zipfile.ZipFile(zip_file) as z:
@@ -408,7 +432,6 @@ def processar_zip_xml(zip_file, ns):
                 try:
                     with z.open(filename) as f:
                         tree = ET.parse(f)
-                        # Processa como SAIDA (Validação geralmente é de emissão própria)
                         itens = processar_xml_detalhado(tree, ns, 'SAIDA')
                         lista_final.extend(itens)
                 except: pass
