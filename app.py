@@ -6,6 +6,14 @@ import motor
 import importlib
 import relatorio
 import zipfile
+import streamlit as st
+
+# Botão na barra lateral para voltar ao Portal
+with st.sidebar:
+    st.markdown("---")
+    # Substitua pelo LINK REAL do seu NOVO Portal que você criou no Passo 1
+    st.link_button("🏠 Voltar ao Portal Principal", "https://auditoria-fiscal.streamlit.app/")
+    st.markdown("---")
 
 # Recarrega módulos auxiliares
 importlib.reload(motor)
@@ -625,3 +633,4 @@ elif modo_app == "🛡️ Validador XML (Reforma)":
             )
         else:
             st.success("🎉 Parabéns! Todos os XMLs analisados estão em conformidade com as regras do sistema.")
+
