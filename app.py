@@ -198,7 +198,7 @@ def converter_df_para_excel(df):
         df.to_excel(writer, index=False, sheet_name='Resultado')
     return output.getvalue()
 
-# --- SIDEBAR ATUALIZADA (NOVA ORDEM) ---
+# --- SIDEBAR ATUALIZADA ---
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/2910/2910768.png", width=70)
     st.markdown("### Selecione o Modo:")
@@ -216,7 +216,6 @@ with st.sidebar:
     
     uploaded_tipi = None 
     
-    # Exibe configs em todas as abas, exceto Comparador (que é isolado)
     if modo_app != "⚔️ Comparador SPED vs SPED":
         if st.session_state.empresa_nome != "Nenhuma Empresa" and modo_app == "📊 Auditoria & Reforma":
             st.success(f"🏢 {st.session_state.empresa_nome}")
@@ -243,7 +242,7 @@ with st.sidebar:
     df_tipi = carregar_tipi_cache(uploaded_tipi)
 
 # ==============================================================================
-# MODO 1: AUDITORIA & REFORMA (ATUALIZADO COM ZIP E SPED UNIVERSAL)
+# MODO 1: AUDITORIA & REFORMA
 # ==============================================================================
 if modo_app == "📊 Auditoria & Reforma":
     st.markdown("""
@@ -259,7 +258,6 @@ if modo_app == "📊 Auditoria & Reforma":
     with c_xml:
         with st.expander("📄 Carregar XMLs (Notas Fiscais)", expanded=True):
             st.markdown("#### 📤 1. XMLs de Saída (Vendas)")
-            # AGORA ACEITA ZIP TAMBÉM
             vendas_files = st.file_uploader("Selecione XMLs ou ZIP", type=['xml', 'zip'], accept_multiple_files=True, key=f"v_{st.session_state.uploader_key}", label_visibility="collapsed")
             if vendas_files: st.markdown(f'<div class="file-success">✅ Arquivos Carregados</div>', unsafe_allow_html=True)
             
@@ -268,9 +266,7 @@ if modo_app == "📊 Auditoria & Reforma":
             compras_files = st.file_uploader("Selecione XMLs ou ZIP", type=['xml', 'zip'], accept_multiple_files=True, key=f"c_{st.session_state.uploader_key}", label_visibility="collapsed")
             if compras_files: st.markdown(f'<div class="file-success">✅ Arquivos Carregados</div>', unsafe_allow_html=True)
 
-            # LÓGICA DE PROCESSAMENTO (ZIP ou SOLTOS)
             if vendas_files and st.session_state.xml_vendas_df.empty:
-                # Verifica se é ZIP
                 tem_zip_v = any(f.name.endswith('.zip') for f in vendas_files)
                 st.session_state.xml_vendas_df = pd.DataFrame(processar_arquivos_com_barra(vendas_files, 'SAIDA', is_zip=tem_zip_v))
                 st.rerun()
@@ -289,14 +285,12 @@ if modo_app == "📊 Auditoria & Reforma":
             
             if sped_file and st.session_state.sped_vendas_df.empty:
                 with st.spinner("Processando SPED Universal..."):
-                    # CHAMA A NOVA FUNÇÃO DO MOTOR
                     nome, vendas, compras = motor.processar_sped_geral(sped_file)
                     st.session_state.empresa_nome = nome
                     st.session_state.sped_vendas_df = pd.DataFrame(vendas) if vendas else pd.DataFrame(columns=cols_padrao)
                     st.session_state.sped_compras_df = pd.DataFrame(compras) if compras else pd.DataFrame(columns=cols_padrao)
                     st.rerun()
 
-    # (RESTO DO MODO 1 PERMANECE IGUAL, POIS OS DATAFRAMES SÃO OS MESMOS)
     df_xml_v = auditar_df(st.session_state.xml_vendas_df.copy())
     df_xml_c = auditar_df(st.session_state.xml_compras_df.copy())
     df_sped_v = auditar_df(st.session_state.sped_vendas_df.copy())
@@ -314,8 +308,6 @@ if modo_app == "📊 Auditoria & Reforma":
             
         tabs = st.tabs(abas)
         
-        # ... (Abas de visualização mantidas iguais) ...
-        # (Para brevidade, mantive a lógica de exibição que já estava perfeita)
         if tem_cruzamento:
             with tabs[abas.index("⚔️ Cruzamento XML x SPED")]:
                 st.markdown("### ⚔️ Auditoria Cruzada")
@@ -416,8 +408,8 @@ elif modo_app == "🔍 Consultor de Classificação":
                     st.markdown(f"**Regra Aplicada:** {desc_regra}")
                     st.caption(f"Fonte da Regra: {origem_legal}")
                     
-                    # LINK SISCOMEX NOVO!
-                    link_siscomex = f"https://portalunico.siscomex.gov.br/classif/#/nomenclatura/detalhar?ncm={ncm_limpo}"
+                    # LINK SISCOMEX COM DEEP LINKING
+                    link_siscomex = f"https://portalunico.siscomex.gov.br/classif/#/nomenclatura/detalhar?perfil=publico&ncm={ncm_limpo}"
                     link_lei = f"https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp214.htm#:~:text={ncm_formatado_pontos}"
                     
                     st.markdown(f"🌐 [**Consultar no Siscomex**]({link_siscomex})")
@@ -455,20 +447,28 @@ elif modo_app == "🔍 Consultor de Classificação":
                         link_lei = f"https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp214.htm#:~:text={ncm_formatado_pontos}"
                         formula_excel = f'=HYPERLINK("{link_lei}", "📜 Base Legal")'
                         
-                        # Link Google apenas para a tela, não vai pro excel
-                        link_google = f"https://www.google.com/search?q=NCM+{ncm_val}+TIPI"
+                        # Link SISCOMEX agora na Tabela
+                        link_siscomex = f"https://portalunico.siscomex.gov.br/classif/#/nomenclatura/detalhar?perfil=publico&ncm={ncm_limpo}"
                         
                         resultados_lote.append({
                             'NCM Original': ncm_val, 'CFOP': cfop_val, 'Descrição TIPI': desc_tipi,
                             'Novo CST': res[3], 'cClassTrib': res[0], 'Regra Aplicada': res[1],
-                            'Status Tributário': res[2], 'Link Conferência (Google)': link_google,
+                            'Status Tributário': res[2], 
+                            'Link Conferência (Web)': link_siscomex, # SISCOMEX
                             'Base Legal (Clique Aqui)': formula_excel
                         })
                         if idx % 10 == 0: prog_bar.progress((idx + 1) / total)
                     prog_bar.empty()
                     df_resultado = pd.DataFrame(resultados_lote)
-                    st.dataframe(df_resultado.drop(columns=['Base Legal (Clique Aqui)']), column_config={"Link Conferência (Google)": st.column_config.LinkColumn("🔍 Validar (Web)", display_text="Ver no Google")})
-                    df_export = df_resultado.drop(columns=['Link Conferência (Google)'])
+                    
+                    st.dataframe(
+                        df_resultado.drop(columns=['Base Legal (Clique Aqui)']), 
+                        column_config={
+                            "Link Conferência (Web)": st.column_config.LinkColumn("🔍 Validar", display_text="Ver no Siscomex")
+                        }
+                    )
+                    
+                    df_export = df_resultado.drop(columns=['Link Conferência (Web)'])
                     excel_data = gerar_excel_final_com_links(df_export)
                     st.download_button(label="📥 Baixar Resultado (Excel Profissional)", data=excel_data, file_name="Resultado_Classificacao.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
                 else: st.error("Não encontrei a coluna 'NCM'. Verifique o cabeçalho.")
