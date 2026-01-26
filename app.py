@@ -67,12 +67,11 @@ st.markdown("""
     .sub-header { font-size: 1rem; color: #FDEBD0; margin-top: 5px; opacity: 0.9; }
     div[data-testid="stMetric"] { background-color: #FFFFFF !important; border: 1px solid #E0E0E0; border-radius: 10px; padding: 15px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); border-top: 4px solid #E67E22; }
     .file-success { background-color: #D5F5E3; color: #196F3D; padding: 10px; border-radius: 5px; border: 1px solid #ABEBC6; margin-top: 5px; margin-bottom: 10px; font-weight: 600; text-align: center; }
-    /* Ajuste para Uploaders mais compactos */
     div[data-testid="stFileUploader"] { padding-top: 0px; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- CACHE E FUNÇÕES AUXILIARES ---
+# --- CACHE ---
 @st.cache_data
 def carregar_bases(): return motor.carregar_base_legal(), motor.carregar_json_regras()
 @st.cache_data
@@ -123,6 +122,40 @@ def gerar_excel_final_com_links(df_para_excel):
         worksheet.set_column('A:Z', 20) 
     return output.getvalue()
 
+# --- NOVA FUNÇÃO: GERAR RELATÓRIO RESUMIDO (SANEAMENTO) ---
+def gerar_excel_saneamento(df_v, df_c):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        # Colunas essenciais para o saneamento
+        cols_base = ['NCM', 'CFOP', 'Produto']
+        cols_extra = ['Novo CST', 'cClassTrib', 'DescRegra', 'Status', 'Validação TIPI']
+        
+        # Processa Saídas
+        if not df_v.empty:
+            # Seleciona colunas que existem no DF
+            cols_presentes = [c for c in cols_base + cols_extra if c in df_v.columns]
+            # Agrupa por NCM, CFOP e Produto e pega o primeiro registro (pois a regra é a mesma)
+            df_resumo_v = df_v[cols_presentes].groupby(cols_base, as_index=False).first()
+            
+            df_resumo_v.to_excel(writer, sheet_name='Resumo_Saidas', index=False)
+            worksheet = writer.sheets['Resumo_Saidas']
+            worksheet.set_column('A:C', 15) # NCM, CFOP
+            worksheet.set_column('C:C', 40) # Produto
+            worksheet.set_column('D:Z', 18) # Resto
+
+        # Processa Entradas
+        if not df_c.empty:
+            cols_presentes = [c for c in cols_base + cols_extra if c in df_c.columns]
+            df_resumo_c = df_c[cols_presentes].groupby(cols_base, as_index=False).first()
+            
+            df_resumo_c.to_excel(writer, sheet_name='Resumo_Entradas', index=False)
+            worksheet = writer.sheets['Resumo_Entradas']
+            worksheet.set_column('A:C', 15)
+            worksheet.set_column('C:C', 40)
+            worksheet.set_column('D:Z', 18)
+            
+    return output.getvalue()
+
 def comparar_speds_avancado(df_a, df_b, label_a="SPED A", label_b="SPED B"):
     cols_group = ['Chave NFe', 'Num NFe', 'CFOP'] 
     cols_sum = ['Valor', 'vICMS', 'vPIS', 'vCOFINS']
@@ -156,7 +189,6 @@ def gerar_excel_divergencias(div_v, so_a_v, so_b_v, div_c, so_a_c, so_b_c):
 
 ns = {'ns': 'http://www.portalfiscal.inf.br/nfe'}
 
-# --- PROCESSAMENTO COM BARRA "LIMPA" (PORCENTAGEM) ---
 def processar_arquivos_com_barra(arquivos, tipo, is_zip=False):
     lista = []
     if is_zip:
@@ -171,7 +203,6 @@ def processar_arquivos_com_barra(arquivos, tipo, is_zip=False):
         total = len(arquivos)
         barra = st.progress(0, text="⏳ Iniciando leitura...")
         for i, arquivo in enumerate(arquivos):
-            # Barra Percentual Limpa
             porcentagem = (i + 1) / total
             barra.progress(porcentagem, text=f"⏳ Processando: {int(porcentagem * 100)}% concluído...")
             try:
@@ -247,7 +278,7 @@ with st.sidebar:
     df_tipi = carregar_tipi_cache(uploaded_tipi)
 
 # ==============================================================================
-# MODO 1: AUDITORIA & REFORMA (LAYOUT COMPACTO DE 3 COLUNAS)
+# MODO 1: AUDITORIA & REFORMA
 # ==============================================================================
 if modo_app == "📊 Auditoria & Reforma":
     st.markdown("""
@@ -259,41 +290,33 @@ if modo_app == "📊 Auditoria & Reforma":
 
     st.markdown("### 📂 Central de Arquivos")
     
-    # --- LAYOUT NOVO: 3 COLUNAS LADO A LADO ---
     c_saida, c_entrada, c_sped = st.columns(3)
 
-    # Coluna 1: Saídas
     with c_saida:
         st.markdown("#### 📤 1. Vendas (XML)")
         vendas_files = st.file_uploader("XMLs ou ZIP", type=['xml', 'zip'], accept_multiple_files=True, key=f"v_{st.session_state.uploader_key}", label_visibility="collapsed")
         if vendas_files: st.markdown(f'<div class="file-success">✅ {len(vendas_files)} Arq.</div>', unsafe_allow_html=True)
 
-    # Coluna 2: Entradas
     with c_entrada:
         st.markdown("#### 📥 2. Compras (XML)")
         compras_files = st.file_uploader("XMLs ou ZIP", type=['xml', 'zip'], accept_multiple_files=True, key=f"c_{st.session_state.uploader_key}", label_visibility="collapsed")
         if compras_files: st.markdown(f'<div class="file-success">✅ {len(compras_files)} Arq.</div>', unsafe_allow_html=True)
 
-    # Coluna 3: SPED (Híbrido)
     with c_sped:
         st.markdown("#### 📝 3. SPED (TXT)")
         sped_file = st.file_uploader("Fiscal ou Contrib.", type=['txt'], accept_multiple_files=False, key=f"s_{st.session_state.uploader_key}", label_visibility="collapsed")
         if sped_file: st.markdown(f'<div class="file-success">✅ SPED OK</div>', unsafe_allow_html=True)
 
-    # --- PROCESSAMENTO ---
-    # 1. XML Saída
     if vendas_files and st.session_state.xml_vendas_df.empty:
         tem_zip_v = any(f.name.endswith('.zip') for f in vendas_files)
         st.session_state.xml_vendas_df = pd.DataFrame(processar_arquivos_com_barra(vendas_files, 'SAIDA', is_zip=tem_zip_v))
         st.rerun()
     
-    # 2. XML Entrada
     if compras_files and st.session_state.xml_compras_df.empty:
         tem_zip_c = any(f.name.endswith('.zip') for f in compras_files)
         st.session_state.xml_compras_df = pd.DataFrame(processar_arquivos_com_barra(compras_files, 'ENTRADA', is_zip=tem_zip_c))
         st.rerun()
 
-    # 3. SPED
     if sped_file and st.session_state.sped_vendas_df.empty:
         with st.spinner("Processando SPED Universal..."):
             nome, vendas, compras = motor.processar_sped_geral(sped_file)
@@ -369,11 +392,26 @@ if modo_app == "📊 Auditoria & Reforma":
                     st.download_button("📄 BAIXAR LAUDO PDF", pdf, "Laudo_Auditoria.pdf", "application/pdf", use_container_width=True)
             except: st.error("Erro PDF")
         with c2:
+            # BOTÃO 1: DADOS COMPLETOS (EXISTENTE)
             buf = io.BytesIO()
             with pd.ExcelWriter(buf, engine='openpyxl') as writer:
                 if not df_final_v.empty: preparing_df = preparar_exibicao(df_final_v); preparing_df.to_excel(writer, sheet_name="Saidas", index=False)
                 if not df_final_c.empty: preparing_df = preparar_exibicao(df_final_c); preparing_df.to_excel(writer, sheet_name="Entradas", index=False)
-            st.download_button("📊 BAIXAR EXCEL", buf, "Auditoria_Dados.xlsx", "primary", use_container_width=True)
+            st.download_button("📊 BAIXAR DADOS COMPLETOS", buf, "Auditoria_Dados_Completos.xlsx", "primary", use_container_width=True)
+            
+            st.markdown("<div style='height: 10px'></div>", unsafe_allow_html=True) # Espaçamento
+            
+            # BOTÃO 2: RESUMO SANEAMENTO (NOVO!)
+            if not df_final_v.empty or not df_final_c.empty:
+                excel_resumo = gerar_excel_saneamento(df_final_v, df_final_c)
+                st.download_button(
+                    "📉 BAIXAR RESUMO (Saneamento)", 
+                    excel_resumo, 
+                    "Resumo_Saneamento_Cadastro.xlsx", 
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
+                    use_container_width=True,
+                    help="Baixa uma lista consolidada por Produto/NCM para atualização de cadastro (sem repetições)."
+                )
 
 # ==============================================================================
 # MODO 2: CONSULTOR (COSMOS NA TELA + LC 214 NO EXCEL)
