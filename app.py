@@ -67,10 +67,12 @@ st.markdown("""
     .sub-header { font-size: 1rem; color: #FDEBD0; margin-top: 5px; opacity: 0.9; }
     div[data-testid="stMetric"] { background-color: #FFFFFF !important; border: 1px solid #E0E0E0; border-radius: 10px; padding: 15px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); border-top: 4px solid #E67E22; }
     .file-success { background-color: #D5F5E3; color: #196F3D; padding: 10px; border-radius: 5px; border: 1px solid #ABEBC6; margin-top: 5px; margin-bottom: 10px; font-weight: 600; text-align: center; }
+    /* Ajuste para Uploaders mais compactos */
+    div[data-testid="stFileUploader"] { padding-top: 0px; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- CACHE ---
+# --- CACHE E FUNÇÕES AUXILIARES ---
 @st.cache_data
 def carregar_bases(): return motor.carregar_base_legal(), motor.carregar_json_regras()
 @st.cache_data
@@ -154,6 +156,7 @@ def gerar_excel_divergencias(div_v, so_a_v, so_b_v, div_c, so_a_c, so_b_c):
 
 ns = {'ns': 'http://www.portalfiscal.inf.br/nfe'}
 
+# --- PROCESSAMENTO COM BARRA "LIMPA" (PORCENTAGEM) ---
 def processar_arquivos_com_barra(arquivos, tipo, is_zip=False):
     lista = []
     if is_zip:
@@ -166,10 +169,11 @@ def processar_arquivos_com_barra(arquivos, tipo, is_zip=False):
         barra.empty()
     else:
         total = len(arquivos)
-        barra = st.progress(0, text=f"⏳ Lendo {total} arquivos...")
+        barra = st.progress(0, text="⏳ Iniciando leitura...")
         for i, arquivo in enumerate(arquivos):
-            progresso = (i + 1) / total
-            barra.progress(progresso, text=f"Lendo {i+1}/{total}: {arquivo.name}")
+            # Barra Percentual Limpa
+            porcentagem = (i + 1) / total
+            barra.progress(porcentagem, text=f"⏳ Processando: {int(porcentagem * 100)}% concluído...")
             try:
                 tree = ET.parse(arquivo)
                 if tipo == 'SAIDA' and st.session_state.empresa_nome == "Nenhuma Empresa":
@@ -243,7 +247,7 @@ with st.sidebar:
     df_tipi = carregar_tipi_cache(uploaded_tipi)
 
 # ==============================================================================
-# MODO 1: AUDITORIA & REFORMA
+# MODO 1: AUDITORIA & REFORMA (LAYOUT COMPACTO DE 3 COLUNAS)
 # ==============================================================================
 if modo_app == "📊 Auditoria & Reforma":
     st.markdown("""
@@ -254,43 +258,49 @@ if modo_app == "📊 Auditoria & Reforma":
     """, unsafe_allow_html=True)
 
     st.markdown("### 📂 Central de Arquivos")
-    c_xml, c_sped = st.columns(2)
+    
+    # --- LAYOUT NOVO: 3 COLUNAS LADO A LADO ---
+    c_saida, c_entrada, c_sped = st.columns(3)
 
-    with c_xml:
-        with st.expander("📄 Carregar XMLs (Notas Fiscais)", expanded=True):
-            st.markdown("#### 📤 1. XMLs de Saída (Vendas)")
-            vendas_files = st.file_uploader("Selecione XMLs ou ZIP", type=['xml', 'zip'], accept_multiple_files=True, key=f"v_{st.session_state.uploader_key}", label_visibility="collapsed")
-            if vendas_files: st.markdown(f'<div class="file-success">✅ Arquivos Carregados</div>', unsafe_allow_html=True)
-            
-            st.divider()
-            st.markdown("#### 📥 2. XMLs de Entrada (Compras)")
-            compras_files = st.file_uploader("Selecione XMLs ou ZIP", type=['xml', 'zip'], accept_multiple_files=True, key=f"c_{st.session_state.uploader_key}", label_visibility="collapsed")
-            if compras_files: st.markdown(f'<div class="file-success">✅ Arquivos Carregados</div>', unsafe_allow_html=True)
+    # Coluna 1: Saídas
+    with c_saida:
+        st.markdown("#### 📤 1. Vendas (XML)")
+        vendas_files = st.file_uploader("XMLs ou ZIP", type=['xml', 'zip'], accept_multiple_files=True, key=f"v_{st.session_state.uploader_key}", label_visibility="collapsed")
+        if vendas_files: st.markdown(f'<div class="file-success">✅ {len(vendas_files)} Arq.</div>', unsafe_allow_html=True)
 
-            if vendas_files and st.session_state.xml_vendas_df.empty:
-                tem_zip_v = any(f.name.endswith('.zip') for f in vendas_files)
-                st.session_state.xml_vendas_df = pd.DataFrame(processar_arquivos_com_barra(vendas_files, 'SAIDA', is_zip=tem_zip_v))
-                st.rerun()
-                
-            if compras_files and st.session_state.xml_compras_df.empty:
-                tem_zip_c = any(f.name.endswith('.zip') for f in compras_files)
-                st.session_state.xml_compras_df = pd.DataFrame(processar_arquivos_com_barra(compras_files, 'ENTRADA', is_zip=tem_zip_c))
-                st.rerun()
+    # Coluna 2: Entradas
+    with c_entrada:
+        st.markdown("#### 📥 2. Compras (XML)")
+        compras_files = st.file_uploader("XMLs ou ZIP", type=['xml', 'zip'], accept_multiple_files=True, key=f"c_{st.session_state.uploader_key}", label_visibility="collapsed")
+        if compras_files: st.markdown(f'<div class="file-success">✅ {len(compras_files)} Arq.</div>', unsafe_allow_html=True)
 
+    # Coluna 3: SPED (Híbrido)
     with c_sped:
-        with st.expander("📝 Carregar SPED (Fiscal ou Contribuições)", expanded=True):
-            st.markdown("#### 📋 Arquivo TXT")
-            st.caption("O sistema detecta automaticamente os itens (0200) e movimentos (C100/C170).")
-            sped_file = st.file_uploader("Selecione o arquivo TXT", type=['txt'], accept_multiple_files=False, key=f"s_{st.session_state.uploader_key}", label_visibility="collapsed")
-            if sped_file: st.markdown(f'<div class="file-success">✅ SPED Pronto</div>', unsafe_allow_html=True)
-            
-            if sped_file and st.session_state.sped_vendas_df.empty:
-                with st.spinner("Processando SPED Universal..."):
-                    nome, vendas, compras = motor.processar_sped_geral(sped_file)
-                    st.session_state.empresa_nome = nome
-                    st.session_state.sped_vendas_df = pd.DataFrame(vendas) if vendas else pd.DataFrame(columns=cols_padrao)
-                    st.session_state.sped_compras_df = pd.DataFrame(compras) if compras else pd.DataFrame(columns=cols_padrao)
-                    st.rerun()
+        st.markdown("#### 📝 3. SPED (TXT)")
+        sped_file = st.file_uploader("Fiscal ou Contrib.", type=['txt'], accept_multiple_files=False, key=f"s_{st.session_state.uploader_key}", label_visibility="collapsed")
+        if sped_file: st.markdown(f'<div class="file-success">✅ SPED OK</div>', unsafe_allow_html=True)
+
+    # --- PROCESSAMENTO ---
+    # 1. XML Saída
+    if vendas_files and st.session_state.xml_vendas_df.empty:
+        tem_zip_v = any(f.name.endswith('.zip') for f in vendas_files)
+        st.session_state.xml_vendas_df = pd.DataFrame(processar_arquivos_com_barra(vendas_files, 'SAIDA', is_zip=tem_zip_v))
+        st.rerun()
+    
+    # 2. XML Entrada
+    if compras_files and st.session_state.xml_compras_df.empty:
+        tem_zip_c = any(f.name.endswith('.zip') for f in compras_files)
+        st.session_state.xml_compras_df = pd.DataFrame(processar_arquivos_com_barra(compras_files, 'ENTRADA', is_zip=tem_zip_c))
+        st.rerun()
+
+    # 3. SPED
+    if sped_file and st.session_state.sped_vendas_df.empty:
+        with st.spinner("Processando SPED Universal..."):
+            nome, vendas, compras = motor.processar_sped_geral(sped_file)
+            st.session_state.empresa_nome = nome
+            st.session_state.sped_vendas_df = pd.DataFrame(vendas) if vendas else pd.DataFrame(columns=cols_padrao)
+            st.session_state.sped_compras_df = pd.DataFrame(compras) if compras else pd.DataFrame(columns=cols_padrao)
+            st.rerun()
 
     df_xml_v = auditar_df(st.session_state.xml_vendas_df.copy())
     df_xml_c = auditar_df(st.session_state.xml_compras_df.copy())
@@ -578,6 +588,7 @@ elif modo_app == "⚔️ Comparador SPED vs SPED":
             if div_v.empty and so_a_v.empty and so_b_v.empty: st.success("✅ As Saídas estão idênticas nos dois arquivos!")
         
         with tab_compras:
+            # (Mesma lógica para compras...)
             div_c, so_a_c, so_b_c, tot_a_c, tot_b_c = comparar_speds_avancado(st.session_state.sped1_compras, st.session_state.sped2_compras)
             if not div_c.empty: st.error("💰 **Divergência de Valores:**"); st.dataframe(div_c[['Num NFe', 'Chave NFe', 'CFOP', 'Valor_A', 'Valor_B', 'Dif_Valor']])
             if not so_a_c.empty: st.warning("⚠️ **Falta no ERP:**"); st.dataframe(so_a_c[['Num NFe', 'Chave NFe', 'CFOP', 'Valor_A']])
