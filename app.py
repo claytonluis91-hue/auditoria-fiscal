@@ -6,6 +6,7 @@ import motor
 import importlib
 import relatorio
 import zipfile
+import streamlit as st
 
 # Botão na barra lateral para voltar ao Portal
 with st.sidebar:
@@ -198,7 +199,7 @@ def converter_df_para_excel(df):
         df.to_excel(writer, index=False, sheet_name='Resultado')
     return output.getvalue()
 
-# --- SIDEBAR ATUALIZADA ---
+# --- SIDEBAR ---
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/2910/2910768.png", width=70)
     st.markdown("### Selecione o Modo:")
@@ -365,7 +366,7 @@ if modo_app == "📊 Auditoria & Reforma":
             st.download_button("📊 BAIXAR EXCEL", buf, "Auditoria_Dados.xlsx", "primary", use_container_width=True)
 
 # ==============================================================================
-# MODO 2: CONSULTOR (LINK SISCOMEX)
+# MODO 2: CONSULTOR (LINK GOV.BR - DECRETO 11158)
 # ==============================================================================
 elif modo_app == "🔍 Consultor de Classificação":
     st.markdown("""
@@ -408,12 +409,14 @@ elif modo_app == "🔍 Consultor de Classificação":
                     st.markdown(f"**Regra Aplicada:** {desc_regra}")
                     st.caption(f"Fonte da Regra: {origem_legal}")
                     
-                    # LINK SISCOMEX COM DEEP LINKING
-                    link_siscomex = f"https://portalunico.siscomex.gov.br/classif/#/nomenclatura/detalhar?perfil=publico&ncm={ncm_limpo}"
+                    # --- LINKS OFICIAIS GOV.BR ---
+                    # 1. TIPI (Decreto 11.158 no Planalto)
+                    link_tipi_gov = f"http://www.planalto.gov.br/ccivil_03/ato2019-2022/2022/decreto/d11158.htm#:~:text={ncm_formatado_pontos}"
+                    # 2. Lei Complementar 214
                     link_lei = f"https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp214.htm#:~:text={ncm_formatado_pontos}"
                     
-                    st.markdown(f"🌐 [**Consultar no Siscomex**]({link_siscomex})")
-                    st.markdown(f"📜 [Consultar na Lei (LC 214)]({link_lei})")
+                    st.markdown(f"📜 [**Ver na TIPI (Decreto 11.158 - Planalto)**]({link_tipi_gov})")
+                    st.markdown(f"⚖️ [**Ver na Lei da Reforma (LC 214)**]({link_lei})")
             else: st.warning("Digite um NCM para pesquisar.")
 
     with tab2:
@@ -444,18 +447,19 @@ elif modo_app == "🔍 Consultor de Classificação":
                         res = motor.classificar_item(row_sim, mapa_lei, df_regras_json, df_tipi, aliq_ibs/100, aliq_cbs/100)
                         desc_tipi = buscar_descricao_tipi(ncm_val, df_tipi)
                         
+                        # --- LINK DA LEI 214 (PARA O EXCEL) ---
                         link_lei = f"https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp214.htm#:~:text={ncm_formatado_pontos}"
                         formula_excel = f'=HYPERLINK("{link_lei}", "📜 Base Legal")'
                         
-                        # Link SISCOMEX agora na Tabela
-                        link_siscomex = f"https://portalunico.siscomex.gov.br/classif/#/nomenclatura/detalhar?perfil=publico&ncm={ncm_limpo}"
+                        # --- LINK TIPI (PARA A TELA) ---
+                        link_tipi_gov = f"http://www.planalto.gov.br/ccivil_03/ato2019-2022/2022/decreto/d11158.htm#:~:text={ncm_formatado_pontos}"
                         
                         resultados_lote.append({
                             'NCM Original': ncm_val, 'CFOP': cfop_val, 'Descrição TIPI': desc_tipi,
                             'Novo CST': res[3], 'cClassTrib': res[0], 'Regra Aplicada': res[1],
                             'Status Tributário': res[2], 
-                            'Link Conferência (Web)': link_siscomex, # SISCOMEX
-                            'Base Legal (Clique Aqui)': formula_excel
+                            'Link Conferência (Web)': link_tipi_gov, # TELA
+                            'Base Legal (Clique Aqui)': formula_excel # EXCEL
                         })
                         if idx % 10 == 0: prog_bar.progress((idx + 1) / total)
                     prog_bar.empty()
@@ -464,7 +468,7 @@ elif modo_app == "🔍 Consultor de Classificação":
                     st.dataframe(
                         df_resultado.drop(columns=['Base Legal (Clique Aqui)']), 
                         column_config={
-                            "Link Conferência (Web)": st.column_config.LinkColumn("🔍 Validar", display_text="Ver no Siscomex")
+                            "Link Conferência (Web)": st.column_config.LinkColumn("🔍 Validar", display_text="Ver na TIPI")
                         }
                     )
                     
@@ -475,7 +479,7 @@ elif modo_app == "🔍 Consultor de Classificação":
             except Exception as e: st.error(f"Erro ao processar arquivo: {e}")
 
 # ==============================================================================
-# MODO 3: VALIDADOR XML (MANTIDO E REALOCADO)
+# MODO 3: VALIDADOR XML (REFORMA)
 # ==============================================================================
 elif modo_app == "🛡️ Validador XML (Reforma)":
     st.markdown("""
@@ -496,7 +500,6 @@ elif modo_app == "🛡️ Validador XML (Reforma)":
                 st.session_state.df_validador = pd.DataFrame(processar_arquivos_com_barra(uploaded_xmls, 'SAIDA', is_zip=False))
             st.rerun()
     if not st.session_state.df_validador.empty:
-        # (Lógica do validador mantida igual à v80)
         df_auditado = auditar_df(st.session_state.df_validador.copy())
         divergencias = []
         prog_bar = st.progress(0, text="🔍 Confrontando XML vs Regras...")
@@ -530,7 +533,7 @@ elif modo_app == "🛡️ Validador XML (Reforma)":
         else: st.success("🎉 Parabéns! Todos os XMLs analisados estão em conformidade com as regras do sistema.")
 
 # ==============================================================================
-# MODO 4: COMPARADOR (REALOCADO PARA O FIM)
+# MODO 4: COMPARADOR SPED VS SPED
 # ==============================================================================
 elif modo_app == "⚔️ Comparador SPED vs SPED":
     st.markdown("""
@@ -562,7 +565,6 @@ elif modo_app == "⚔️ Comparador SPED vs SPED":
                 st.rerun()
     
     if not st.session_state.sped1_vendas.empty and not st.session_state.sped2_vendas.empty:
-        # (Lógica de comparação mantida)
         st.divider()
         st.markdown("### 📊 Resultado da Auditoria Cruzada")
         tab_vendas, tab_compras = st.tabs(["📤 Comparar Saídas (Vendas)", "📥 Comparar Entradas (Compras)"])
@@ -576,7 +578,6 @@ elif modo_app == "⚔️ Comparador SPED vs SPED":
             if div_v.empty and so_a_v.empty and so_b_v.empty: st.success("✅ As Saídas estão idênticas nos dois arquivos!")
         
         with tab_compras:
-            # (Mesma lógica para compras...)
             div_c, so_a_c, so_b_c, tot_a_c, tot_b_c = comparar_speds_avancado(st.session_state.sped1_compras, st.session_state.sped2_compras)
             if not div_c.empty: st.error("💰 **Divergência de Valores:**"); st.dataframe(div_c[['Num NFe', 'Chave NFe', 'CFOP', 'Valor_A', 'Valor_B', 'Dif_Valor']])
             if not so_a_c.empty: st.warning("⚠️ **Falta no ERP:**"); st.dataframe(so_a_c[['Num NFe', 'Chave NFe', 'CFOP', 'Valor_A']])
