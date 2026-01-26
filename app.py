@@ -366,7 +366,7 @@ if modo_app == "📊 Auditoria & Reforma":
             st.download_button("📊 BAIXAR EXCEL", buf, "Auditoria_Dados.xlsx", "primary", use_container_width=True)
 
 # ==============================================================================
-# MODO 2: CONSULTOR (LINK GOV.BR - DECRETO 11158)
+# MODO 2: CONSULTOR (COSMOS NA TELA + LC 214 NO EXCEL)
 # ==============================================================================
 elif modo_app == "🔍 Consultor de Classificação":
     st.markdown("""
@@ -409,13 +409,13 @@ elif modo_app == "🔍 Consultor de Classificação":
                     st.markdown(f"**Regra Aplicada:** {desc_regra}")
                     st.caption(f"Fonte da Regra: {origem_legal}")
                     
-                    # --- LINKS OFICIAIS GOV.BR ---
-                    # 1. TIPI (Decreto 11.158 no Planalto)
-                    link_tipi_gov = f"http://www.planalto.gov.br/ccivil_03/ato2019-2022/2022/decreto/d11158.htm#:~:text={ncm_formatado_pontos}"
-                    # 2. Lei Complementar 214
+                    # --- LINKS ATUALIZADOS ---
+                    # 1. COSMOS (Visualização de Produto - Tira Teima)
+                    link_cosmos = f"https://cosmos.bluesoft.com.br/ncms/{ncm_limpo}"
+                    # 2. Lei Complementar 214 (Texto Legal - Link Corrigido)
                     link_lei = f"https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp214.htm#:~:text={ncm_formatado_pontos}"
                     
-                    st.markdown(f"📜 [**Ver na TIPI (Decreto 11.158 - Planalto)**]({link_tipi_gov})")
+                    st.markdown(f"📦 [**Ver Produto no Cosmos (Tira-Teima)**]({link_cosmos})")
                     st.markdown(f"⚖️ [**Ver na Lei da Reforma (LC 214)**]({link_lei})")
             else: st.warning("Digite um NCM para pesquisar.")
 
@@ -451,15 +451,15 @@ elif modo_app == "🔍 Consultor de Classificação":
                         link_lei = f"https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp214.htm#:~:text={ncm_formatado_pontos}"
                         formula_excel = f'=HYPERLINK("{link_lei}", "📜 Base Legal")'
                         
-                        # --- LINK TIPI (PARA A TELA) ---
-                        link_tipi_gov = f"http://www.planalto.gov.br/ccivil_03/ato2019-2022/2022/decreto/d11158.htm#:~:text={ncm_formatado_pontos}"
+                        # --- LINK COSMOS (PARA A TELA) ---
+                        link_cosmos = f"https://cosmos.bluesoft.com.br/ncms/{ncm_limpo}"
                         
                         resultados_lote.append({
                             'NCM Original': ncm_val, 'CFOP': cfop_val, 'Descrição TIPI': desc_tipi,
                             'Novo CST': res[3], 'cClassTrib': res[0], 'Regra Aplicada': res[1],
                             'Status Tributário': res[2], 
-                            'Link Conferência (Web)': link_tipi_gov, # TELA
-                            'Base Legal (Clique Aqui)': formula_excel # EXCEL
+                            'Link Conferência (Web)': link_cosmos, 
+                            'Base Legal (Clique Aqui)': formula_excel 
                         })
                         if idx % 10 == 0: prog_bar.progress((idx + 1) / total)
                     prog_bar.empty()
@@ -468,7 +468,7 @@ elif modo_app == "🔍 Consultor de Classificação":
                     st.dataframe(
                         df_resultado.drop(columns=['Base Legal (Clique Aqui)']), 
                         column_config={
-                            "Link Conferência (Web)": st.column_config.LinkColumn("🔍 Validar", display_text="Ver na TIPI")
+                            "Link Conferência (Web)": st.column_config.LinkColumn("🔍 Tira-Teima", display_text="Ver Produto")
                         }
                     )
                     
