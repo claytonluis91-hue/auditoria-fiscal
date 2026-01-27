@@ -122,37 +122,42 @@ def gerar_excel_final_com_links(df_para_excel):
         worksheet.set_column('A:Z', 20) 
     return output.getvalue()
 
-# --- NOVA FUNÇÃO: GERAR RELATÓRIO RESUMIDO (SANEAMENTO) ---
+# --- FUNÇÃO AUXILIAR PARA GERAR LINK (Usada no saneamento) ---
+def criar_link_lei(ncm):
+    ncm_fmt = formatar_ncm_pontos(ncm)
+    link = f"https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp214.htm#:~:text={ncm_fmt}"
+    return f'=HYPERLINK("{link}", "📜 Base Legal")'
+
+# --- FUNÇÃO DE SANEAMENTO ATUALIZADA (COM LINK) ---
 def gerar_excel_saneamento(df_v, df_c):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        # Colunas essenciais para o saneamento
         cols_base = ['NCM', 'CFOP', 'Produto']
         cols_extra = ['Novo CST', 'cClassTrib', 'DescRegra', 'Status', 'Validação TIPI']
         
         # Processa Saídas
         if not df_v.empty:
-            # Seleciona colunas que existem no DF
             cols_presentes = [c for c in cols_base + cols_extra if c in df_v.columns]
-            # Agrupa por NCM, CFOP e Produto e pega o primeiro registro (pois a regra é a mesma)
             df_resumo_v = df_v[cols_presentes].groupby(cols_base, as_index=False).first()
             
+            # Adiciona Coluna de Link
+            df_resumo_v['Base Legal (Clique Aqui)'] = df_resumo_v['NCM'].apply(criar_link_lei)
+            
             df_resumo_v.to_excel(writer, sheet_name='Resumo_Saidas', index=False)
-            worksheet = writer.sheets['Resumo_Saidas']
-            worksheet.set_column('A:C', 15) # NCM, CFOP
-            worksheet.set_column('C:C', 40) # Produto
-            worksheet.set_column('D:Z', 18) # Resto
+            writer.sheets['Resumo_Saidas'].set_column('A:Z', 18)
+            writer.sheets['Resumo_Saidas'].set_column('C:C', 40) # Largura Produto
 
         # Processa Entradas
         if not df_c.empty:
             cols_presentes = [c for c in cols_base + cols_extra if c in df_c.columns]
             df_resumo_c = df_c[cols_presentes].groupby(cols_base, as_index=False).first()
             
+            # Adiciona Coluna de Link
+            df_resumo_c['Base Legal (Clique Aqui)'] = df_resumo_c['NCM'].apply(criar_link_lei)
+            
             df_resumo_c.to_excel(writer, sheet_name='Resumo_Entradas', index=False)
-            worksheet = writer.sheets['Resumo_Entradas']
-            worksheet.set_column('A:C', 15)
-            worksheet.set_column('C:C', 40)
-            worksheet.set_column('D:Z', 18)
+            writer.sheets['Resumo_Entradas'].set_column('A:Z', 18)
+            writer.sheets['Resumo_Entradas'].set_column('C:C', 40)
             
     return output.getvalue()
 
@@ -189,22 +194,36 @@ def gerar_excel_divergencias(div_v, so_a_v, so_b_v, div_c, so_a_c, so_b_c):
 
 ns = {'ns': 'http://www.portalfiscal.inf.br/nfe'}
 
+# --- PROCESSAMENTO OTIMIZADO (ZIP TURBO) ---
 def processar_arquivos_com_barra(arquivos, tipo, is_zip=False):
     lista = []
+    
     if is_zip:
-        total = 1
-        barra = st.progress(0, text="⏳ Extraindo e processando ZIP...")
+        # Modo ZIP Otimizado
+        barra = st.progress(0, text="⏳ Descompactando e analisando ZIP...")
         for arquivo in arquivos:
             try:
-                lista.extend(motor.processar_zip_xml(arquivo, ns))
+                # Usa a função do motor que já varre o ZIP internamente
+                # ATENÇÃO: processar_zip_xml não tem callback de progresso, 
+                # então ele roda "silencioso" mas é muito mais rápido.
+                itens = motor.processar_zip_xml(arquivo, ns)
+                lista.extend(itens)
             except: pass
-        barra.empty()
+        barra.empty() # Limpa a barra
+        st.toast(f"✅ ZIP Processado! {len(lista)} itens encontrados.", icon="🚀")
+        
     else:
+        # Modo Arquivos Soltos
         total = len(arquivos)
         barra = st.progress(0, text="⏳ Iniciando leitura...")
+        # Atualiza a barra a cada 10% ou a cada arquivo se forem poucos
+        step = max(1, int(total / 10)) 
+        
         for i, arquivo in enumerate(arquivos):
-            porcentagem = (i + 1) / total
-            barra.progress(porcentagem, text=f"⏳ Processando: {int(porcentagem * 100)}% concluído...")
+            if i % step == 0:
+                perc = int((i / total) * 100)
+                barra.progress(i / total, text=f"⏳ Processando: {perc}% concluído...")
+            
             try:
                 tree = ET.parse(arquivo)
                 if tipo == 'SAIDA' and st.session_state.empresa_nome == "Nenhuma Empresa":
@@ -212,6 +231,7 @@ def processar_arquivos_com_barra(arquivos, tipo, is_zip=False):
                 lista.extend(motor.processar_xml_detalhado(tree, ns, tipo))
             except: continue
         barra.empty()
+        
     return lista
 
 def auditar_df(df):
@@ -392,16 +412,15 @@ if modo_app == "📊 Auditoria & Reforma":
                     st.download_button("📄 BAIXAR LAUDO PDF", pdf, "Laudo_Auditoria.pdf", "application/pdf", use_container_width=True)
             except: st.error("Erro PDF")
         with c2:
-            # BOTÃO 1: DADOS COMPLETOS (EXISTENTE)
             buf = io.BytesIO()
             with pd.ExcelWriter(buf, engine='openpyxl') as writer:
                 if not df_final_v.empty: preparing_df = preparar_exibicao(df_final_v); preparing_df.to_excel(writer, sheet_name="Saidas", index=False)
                 if not df_final_c.empty: preparing_df = preparar_exibicao(df_final_c); preparing_df.to_excel(writer, sheet_name="Entradas", index=False)
             st.download_button("📊 BAIXAR DADOS COMPLETOS", buf, "Auditoria_Dados_Completos.xlsx", "primary", use_container_width=True)
             
-            st.markdown("<div style='height: 10px'></div>", unsafe_allow_html=True) # Espaçamento
+            st.markdown("<div style='height: 10px'></div>", unsafe_allow_html=True)
             
-            # BOTÃO 2: RESUMO SANEAMENTO (NOVO!)
+            # BOTÃO DE RESUMO (SANEAMENTO) - COM LINK AGORA
             if not df_final_v.empty or not df_final_c.empty:
                 excel_resumo = gerar_excel_saneamento(df_final_v, df_final_c)
                 st.download_button(
@@ -410,7 +429,7 @@ if modo_app == "📊 Auditoria & Reforma":
                     "Resumo_Saneamento_Cadastro.xlsx", 
                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
                     use_container_width=True,
-                    help="Baixa uma lista consolidada por Produto/NCM para atualização de cadastro (sem repetições)."
+                    help="Baixa lista consolidada por NCM/Produto com link para a lei (ideal para atualização de ERP)."
                 )
 
 # ==============================================================================
@@ -457,10 +476,8 @@ elif modo_app == "🔍 Consultor de Classificação":
                     st.markdown(f"**Regra Aplicada:** {desc_regra}")
                     st.caption(f"Fonte da Regra: {origem_legal}")
                     
-                    # --- LINKS ATUALIZADOS ---
-                    # 1. COSMOS (Visualização de Produto - Tira Teima)
+                    # --- LINKS ---
                     link_cosmos = f"https://cosmos.bluesoft.com.br/ncms/{ncm_limpo}"
-                    # 2. Lei Complementar 214 (Texto Legal - Link Corrigido)
                     link_lei = f"https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp214.htm#:~:text={ncm_formatado_pontos}"
                     
                     st.markdown(f"📦 [**Ver Produto no Cosmos (Tira-Teima)**]({link_cosmos})")
@@ -495,11 +512,9 @@ elif modo_app == "🔍 Consultor de Classificação":
                         res = motor.classificar_item(row_sim, mapa_lei, df_regras_json, df_tipi, aliq_ibs/100, aliq_cbs/100)
                         desc_tipi = buscar_descricao_tipi(ncm_val, df_tipi)
                         
-                        # --- LINK DA LEI 214 (PARA O EXCEL) ---
                         link_lei = f"https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp214.htm#:~:text={ncm_formatado_pontos}"
                         formula_excel = f'=HYPERLINK("{link_lei}", "📜 Base Legal")'
                         
-                        # --- LINK COSMOS (PARA A TELA) ---
                         link_cosmos = f"https://cosmos.bluesoft.com.br/ncms/{ncm_limpo}"
                         
                         resultados_lote.append({
