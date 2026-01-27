@@ -184,10 +184,10 @@ def processar_arquivos_com_barra(arquivos, tipo, is_zip=False):
         barra.empty()
     else:
         total = len(arquivos)
-        barra = st.progress(0, text=f"⏳ Lendo {total} arquivos...")
+        barra = st.progress(0, text="⏳ Iniciando leitura...")
         for i, arquivo in enumerate(arquivos):
-            progresso = (i + 1) / total
-            barra.progress(progresso, text=f"Lendo {i+1}/{total}: {arquivo.name}")
+            porcentagem = (i + 1) / total
+            barra.progress(porcentagem, text=f"⏳ Processando: {int(porcentagem * 100)}% concluído...")
             try:
                 tree = ET.parse(arquivo)
                 if tipo == 'SAIDA' and st.session_state.empresa_nome == "Nenhuma Empresa":
@@ -197,7 +197,6 @@ def processar_arquivos_com_barra(arquivos, tipo, is_zip=False):
         barra.empty()
     return lista
 
-# FUNÇÃO AUDITAR (Agora recebe as alíquotas dinâmicas)
 def auditar_df(df, a_ibs, a_cbs):
     if df.empty: return df
     res = df.apply(lambda row: motor.classificar_item(row, mapa_lei, df_regras_json, df_tipi, a_ibs, a_cbs), axis=1, result_type='expand')
@@ -243,9 +242,9 @@ with st.sidebar:
             
         st.markdown("#### ⚙️ Parâmetros Fiscais")
         
-        # DEFINIÇÃO DOS DEFAULTS (AQUI ESTÁ A CORREÇÃO!)
+        # --- CORREÇÃO DA INVERSÃO DE ALÍQUOTAS ---
         if modo_app == "🛡️ Validador XML (Reforma)":
-            val_ibs, val_cbs = 0.9, 0.1 # Alíquotas Teste
+            val_ibs, val_cbs = 0.1, 0.9 # CORRIGIDO: 0.1% IBS e 0.9% CBS
             st.info("ℹ️ Alíquotas ajustadas para Período de Teste (1.0%)")
         else:
             val_ibs, val_cbs = 17.7, 8.8 # Alíquotas Futuras (Padrão)
@@ -284,46 +283,42 @@ if modo_app == "📊 Auditoria & Reforma":
     """, unsafe_allow_html=True)
 
     st.markdown("### 📂 Central de Arquivos")
-    c_xml, c_sped = st.columns(2)
+    
+    c_saida, c_entrada, c_sped = st.columns(3)
 
-    with c_xml:
-        with st.expander("📄 Carregar XMLs (Notas Fiscais)", expanded=True):
-            st.markdown("#### 📤 1. XMLs de Saída (Vendas)")
-            vendas_files = st.file_uploader("Selecione XMLs ou ZIP", type=['xml', 'zip'], accept_multiple_files=True, key=f"v_{st.session_state.uploader_key}", label_visibility="collapsed")
-            if vendas_files: st.markdown(f'<div class="file-success">✅ Arquivos Carregados</div>', unsafe_allow_html=True)
-            
-            st.divider()
-            
-            st.markdown("#### 📥 2. XMLs de Entrada (Compras)")
-            compras_files = st.file_uploader("Selecione XMLs ou ZIP", type=['xml', 'zip'], accept_multiple_files=True, key=f"c_{st.session_state.uploader_key}", label_visibility="collapsed")
-            if compras_files: st.markdown(f'<div class="file-success">✅ Arquivos Carregados</div>', unsafe_allow_html=True)
+    with c_saida:
+        st.markdown("#### 📤 1. Vendas (XML)")
+        vendas_files = st.file_uploader("XMLs ou ZIP", type=['xml', 'zip'], accept_multiple_files=True, key=f"v_{st.session_state.uploader_key}", label_visibility="collapsed")
+        if vendas_files: st.markdown(f'<div class="file-success">✅ {len(vendas_files)} Arq.</div>', unsafe_allow_html=True)
 
-            if vendas_files and st.session_state.xml_vendas_df.empty:
-                tem_zip_v = any(f.name.endswith('.zip') for f in vendas_files)
-                st.session_state.xml_vendas_df = pd.DataFrame(processar_arquivos_com_barra(vendas_files, 'SAIDA', is_zip=tem_zip_v))
-                st.rerun()
-                
-            if compras_files and st.session_state.xml_compras_df.empty:
-                tem_zip_c = any(f.name.endswith('.zip') for f in compras_files)
-                st.session_state.xml_compras_df = pd.DataFrame(processar_arquivos_com_barra(compras_files, 'ENTRADA', is_zip=tem_zip_c))
-                st.rerun()
+    with c_entrada:
+        st.markdown("#### 📥 2. Compras (XML)")
+        compras_files = st.file_uploader("XMLs ou ZIP", type=['xml', 'zip'], accept_multiple_files=True, key=f"c_{st.session_state.uploader_key}", label_visibility="collapsed")
+        if compras_files: st.markdown(f'<div class="file-success">✅ {len(compras_files)} Arq.</div>', unsafe_allow_html=True)
 
     with c_sped:
-        with st.expander("📝 Carregar SPED (Fiscal ou Contribuições)", expanded=True):
-            st.markdown("#### 📋 Arquivo TXT")
-            st.caption("O sistema detecta automaticamente os itens (0200) e movimentos (C100/C170).")
-            sped_file = st.file_uploader("Selecione o arquivo TXT", type=['txt'], accept_multiple_files=False, key=f"s_{st.session_state.uploader_key}", label_visibility="collapsed")
-            if sped_file: st.markdown(f'<div class="file-success">✅ SPED Pronto</div>', unsafe_allow_html=True)
-            
-            if sped_file and st.session_state.sped_vendas_df.empty:
-                with st.spinner("Processando SPED Universal..."):
-                    nome, vendas, compras = motor.processar_sped_geral(sped_file)
-                    st.session_state.empresa_nome = nome
-                    st.session_state.sped_vendas_df = pd.DataFrame(vendas) if vendas else pd.DataFrame(columns=cols_padrao)
-                    st.session_state.sped_compras_df = pd.DataFrame(compras) if compras else pd.DataFrame(columns=cols_padrao)
-                    st.rerun()
+        st.markdown("#### 📝 3. SPED (TXT)")
+        sped_file = st.file_uploader("Fiscal ou Contrib.", type=['txt'], accept_multiple_files=False, key=f"s_{st.session_state.uploader_key}", label_visibility="collapsed")
+        if sped_file: st.markdown(f'<div class="file-success">✅ SPED OK</div>', unsafe_allow_html=True)
 
-    # AUDITORIA COM AS ALIQUOTAS DA SIDEBAR
+    if vendas_files and st.session_state.xml_vendas_df.empty:
+        tem_zip_v = any(f.name.endswith('.zip') for f in vendas_files)
+        st.session_state.xml_vendas_df = pd.DataFrame(processar_arquivos_com_barra(vendas_files, 'SAIDA', is_zip=tem_zip_v))
+        st.rerun()
+    
+    if compras_files and st.session_state.xml_compras_df.empty:
+        tem_zip_c = any(f.name.endswith('.zip') for f in compras_files)
+        st.session_state.xml_compras_df = pd.DataFrame(processar_arquivos_com_barra(compras_files, 'ENTRADA', is_zip=tem_zip_c))
+        st.rerun()
+
+    if sped_file and st.session_state.sped_vendas_df.empty:
+        with st.spinner("Processando SPED Universal..."):
+            nome, vendas, compras = motor.processar_sped_geral(sped_file)
+            st.session_state.empresa_nome = nome
+            st.session_state.sped_vendas_df = pd.DataFrame(vendas) if vendas else pd.DataFrame(columns=cols_padrao)
+            st.session_state.sped_compras_df = pd.DataFrame(compras) if compras else pd.DataFrame(columns=cols_padrao)
+            st.rerun()
+
     df_xml_v = auditar_df(st.session_state.xml_vendas_df.copy(), aliq_ibs/100, aliq_cbs/100)
     df_xml_c = auditar_df(st.session_state.xml_compras_df.copy(), aliq_ibs/100, aliq_cbs/100)
     df_sped_v = auditar_df(st.session_state.sped_vendas_df.copy(), aliq_ibs/100, aliq_cbs/100)
@@ -380,11 +375,6 @@ if modo_app == "📊 Auditoria & Reforma":
             c = df_final_c['Carga Projetada'].sum() if 'Carga Projetada' in df_final_c.columns else 0.0
             k1, k2, k3 = st.columns(3)
             k1.metric("Débitos", f"R$ {d:,.2f}"); k2.metric("Créditos", f"R$ {c:,.2f}"); k3.metric("Saldo", f"R$ {d-c:,.2f}")
-            try:
-                if 'Carga Projetada' in df_final_v.columns:
-                    top = df_final_v.groupby('Produto')['Carga Projetada'].sum().nlargest(5).reset_index()
-                    st.bar_chart(top.set_index('Produto')['Carga Projetada'])
-            except: pass
 
         st.markdown("---")
         st.markdown("### 📥 Exportar Relatórios")
@@ -400,17 +390,20 @@ if modo_app == "📊 Auditoria & Reforma":
             with pd.ExcelWriter(buf, engine='openpyxl') as writer:
                 if not df_final_v.empty: preparing_df = preparar_exibicao(df_final_v); preparing_df.to_excel(writer, sheet_name="Saidas", index=False)
                 if not df_final_c.empty: preparing_df = preparar_exibicao(df_final_c); preparing_df.to_excel(writer, sheet_name="Entradas", index=False)
-                if tem_cruzamento:
-                    if 'so_xml' in locals() and not so_xml.empty: so_xml.to_excel(writer, sheet_name="Omissao_SPED", index=False)
-                    if 'div' in locals() and not div.empty: div.to_excel(writer, sheet_name="Divergencia_Valor", index=False)
-            
-            # NOVO: GERAÇÃO DO RESUMO DE SANEAMENTO
-            st.download_button("📊 BAIXAR EXCEL COMPLETO", buf, "Auditoria_Dados.xlsx", "primary", use_container_width=True)
+            st.download_button("📊 BAIXAR DADOS COMPLETOS", buf, "Auditoria_Dados_Completos.xlsx", "primary", use_container_width=True)
             
             st.markdown("<div style='height: 10px'></div>", unsafe_allow_html=True)
+            
             if not df_final_v.empty or not df_final_c.empty:
-                resumo_saneamento = gerar_excel_saneamento(df_final_v, df_final_c)
-                st.download_button("📉 BAIXAR RESUMO SANEAMENTO", resumo_saneamento, "Resumo_Saneamento.xlsx", "secondary", use_container_width=True)
+                excel_resumo = gerar_excel_saneamento(df_final_v, df_final_c)
+                st.download_button(
+                    "📉 BAIXAR RESUMO (Saneamento)", 
+                    excel_resumo, 
+                    "Resumo_Saneamento_Cadastro.xlsx", 
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
+                    use_container_width=True,
+                    help="Baixa lista consolidada por NCM/Produto com link para a lei (ideal para atualização de ERP)."
+                )
 
 # ==============================================================================
 # MODO 2: CONSULTOR (COSMOS NA TELA + LC 214 NO EXCEL)
@@ -436,8 +429,6 @@ elif modo_app == "🔍 Consultor de Classificação":
                 ncm_limpo = ncm_input.replace('.', '').strip()
                 ncm_formatado_pontos = formatar_ncm_pontos(ncm_limpo)
                 desc_tipi = buscar_descricao_tipi(ncm_limpo, df_tipi)
-                # Passa as alíquotas do sidebar (mesmo que sejam 0.9/0.1 se o usuário não mudou, mas o padrão é 17.7/8.8)
-                # AVISO: No modo Consultor, usamos as aliquotas do sidebar que por padrão são do Auditoria (17.7/8.8)
                 row_simulada = {'NCM': ncm_limpo, 'CFOP': cfop_input if cfop_input else '5102', 'Valor': 100.00, 'vICMS': 0, 'vPIS': 0, 'vCOFINS': 0}
                 resultado = motor.classificar_item(row_simulada, mapa_lei, df_regras_json, df_tipi, aliq_ibs/100, aliq_cbs/100)
                 cClass, desc_regra, status, novo_cst, origem_legal = resultado[0], resultado[1], resultado[2], resultado[3], resultado[4]
@@ -458,6 +449,7 @@ elif modo_app == "🔍 Consultor de Classificação":
                     st.markdown(f"**Regra Aplicada:** {desc_regra}")
                     st.caption(f"Fonte da Regra: {origem_legal}")
                     
+                    # --- LINKS ATUALIZADOS ---
                     link_cosmos = f"https://cosmos.bluesoft.com.br/ncms/{ncm_limpo}"
                     link_lei = f"https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp214.htm#:~:text={ncm_formatado_pontos}"
                     
@@ -515,7 +507,7 @@ elif modo_app == "🔍 Consultor de Classificação":
             except Exception as e: st.error(f"Erro ao processar arquivo: {e}")
 
 # ==============================================================================
-# MODO 3: VALIDADOR XML (REFORMA)
+# MODO 3: VALIDADOR XML (REFORMA) - COM NOVAS COLUNAS
 # ==============================================================================
 elif modo_app == "🛡️ Validador XML (Reforma)":
     st.markdown("""
@@ -524,8 +516,11 @@ elif modo_app == "🛡️ Validador XML (Reforma)":
         <div class="sub-header">Auditoria de Tags IBS/CBS e Classificação em Arquivos de Teste</div>
     </div>
     """, unsafe_allow_html=True)
+
     st.info("ℹ️ Suba arquivos XML (ou um ZIP) emitidos com o layout de teste da Reforma. O sistema confrontará as tags com o cálculo interno.")
+
     uploaded_xmls = st.file_uploader("Selecione XMLs soltos ou Arquivo ZIP", type=['xml', 'zip'], accept_multiple_files=True)
+
     if uploaded_xmls:
         tem_zip = any(f.name.endswith('.zip') for f in uploaded_xmls)
         if st.session_state.df_validador.empty:
@@ -535,39 +530,72 @@ elif modo_app == "🛡️ Validador XML (Reforma)":
             else:
                 st.session_state.df_validador = pd.DataFrame(processar_arquivos_com_barra(uploaded_xmls, 'SAIDA', is_zip=False))
             st.rerun()
+
     if not st.session_state.df_validador.empty:
-        # AQUI USAMOS AS ALIQUOTAS TESTE DEFINIDAS NO INÍCIO (0.9 e 0.1)
+        # AQUI USAMOS AS ALIQUOTAS TESTE DEFINIDAS NO INÍCIO (0.1 e 0.9)
         df_auditado = auditar_df(st.session_state.df_validador.copy(), aliq_ibs/100, aliq_cbs/100)
         divergencias = []
         prog_bar = st.progress(0, text="🔍 Confrontando XML vs Regras...")
         total_rows = len(df_auditado)
+        
         for idx, row in df_auditado.iterrows():
-            xml_ibs = row.get('XML_vIBS', 0.0); xml_class = str(row.get('XML_cClass', '')).strip()
-            sys_ibs = row.get('vIBS', 0.0); sys_class = str(row.get('cClassTrib', '')).strip()
+            xml_ibs = row.get('XML_vIBS', 0.0)
+            xml_cbs = row.get('XML_vCBS', 0.0)
+            xml_class = str(row.get('XML_cClass', '')).strip()
+            
+            sys_ibs = row.get('vIBS', 0.0)
+            sys_cbs = row.get('vCBS', 0.0)
+            sys_class = str(row.get('cClassTrib', '')).strip()
+            
             status_class = "✅ OK" if xml_class == sys_class else "❌ Divergente"
             diff_ibs = abs(xml_ibs - sys_ibs)
             status_valor = "✅ OK" if diff_ibs < 0.05 else "❌ Valor Diferente"
+            
             if status_class == "❌ Divergente" or status_valor == "❌ Valor Diferente":
                 divergencias.append({
-                    'Chave NFe': row['Chave NFe'], 'Num NFe': row['Num NFe'], 'Produto': row['Produto'], 'NCM': row['NCM'],
-                    'cClass XML': xml_class, 'cClass Sistema': sys_class, 'vIBS XML': xml_ibs, 'vIBS Sistema': sys_ibs,
-                    'Status Classif.': status_class, 'Status Valor': status_valor
+                    'Chave NFe': row['Chave NFe'],
+                    'Num NFe': row['Num NFe'],
+                    'Produto': row['Produto'],
+                    'NCM': row['NCM'],
+                    'Valor Produto': row['Valor'], # COLUNA NOVA
+                    'cClass XML': xml_class,
+                    'cClass Sistema': sys_class,
+                    'vIBS XML': xml_ibs,
+                    'vIBS Sistema': sys_ibs,
+                    'vCBS XML': xml_cbs, # COLUNA NOVA
+                    'vCBS Sistema': sys_cbs, # COLUNA NOVA
+                    'Status Classif.': status_class,
+                    'Status Valor': status_valor
                 })
+            
             if idx % 10 == 0: prog_bar.progress((idx + 1) / total_rows)
+            
         prog_bar.empty()
+        
         st.divider()
         k1, k2, k3 = st.columns(3)
-        k1.metric("Total Notas Analisadas", total_rows); k2.metric("XMLs Corretos", total_rows - len(divergencias)); k3.metric("Com Divergência", len(divergencias), delta_color="inverse")
+        k1.metric("Total Notas Analisadas", total_rows)
+        k2.metric("XMLs Corretos", total_rows - len(divergencias))
+        k3.metric("Com Divergência", len(divergencias), delta_color="inverse")
+        
         if divergencias:
             df_div = pd.DataFrame(divergencias)
             st.error(f"🚨 Encontramos {len(divergencias)} itens com divergência na tag de Reforma!")
             st.dataframe(df_div)
+            
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                 df_div.to_excel(writer, index=False, sheet_name='Divergencias_XML')
-                writer.sheets['Divergencias_XML'].set_column('A:J', 18)
-            st.download_button("📥 Baixar Relatório de Erros XML", output.getvalue(), "Erros_Validacao_XML.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-        else: st.success("🎉 Parabéns! Todos os XMLs analisados estão em conformidade com as regras do sistema.")
+                writer.sheets['Divergencias_XML'].set_column('A:M', 18)
+            
+            st.download_button(
+                "📥 Baixar Relatório de Erros XML",
+                output.getvalue(),
+                "Erros_Validacao_XML.xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        else:
+            st.success("🎉 Parabéns! Todos os XMLs analisados estão em conformidade com as regras do sistema.")
 
 # ==============================================================================
 # MODO 4: COMPARADOR SPED VS SPED
@@ -583,11 +611,9 @@ elif modo_app == "⚔️ Comparador SPED vs SPED":
     with col1:
         st.markdown("### 📁 1. SPED Original (Cliente)")
         file1 = st.file_uploader("Selecione o SPED do Cliente", type=['txt'], key="sped1")
-        if not file1:
-            st.session_state.sped1_vendas = pd.DataFrame(columns=cols_padrao)
-        elif file1 and st.session_state.sped1_vendas.empty:
+        if file1 and st.session_state.sped1_vendas.empty:
             with st.spinner("Processando SPED A..."):
-                n1, v1, c1 = motor.processar_sped_fiscal(file1)
+                n1, v1, c1 = motor.processar_sped_geral(file1) # USA FUNÇÃO NOVA
                 st.session_state.sped1_vendas = pd.DataFrame(v1) if v1 else pd.DataFrame(columns=cols_padrao)
                 st.session_state.sped1_compras = pd.DataFrame(c1) if c1 else pd.DataFrame(columns=cols_padrao)
                 st.success(f"Lido: {len(v1)} Saídas | {len(c1)} Entradas")
@@ -595,11 +621,9 @@ elif modo_app == "⚔️ Comparador SPED vs SPED":
     with col2:
         st.markdown("### 💻 2. SPED Gerado (ERP/Sistema)")
         file2 = st.file_uploader("Selecione o SPED do ERP", type=['txt'], key="sped2")
-        if not file2:
-            st.session_state.sped2_vendas = pd.DataFrame(columns=cols_padrao)
-        elif file2 and st.session_state.sped2_vendas.empty:
+        if file2 and st.session_state.sped2_vendas.empty:
             with st.spinner("Processando SPED B..."):
-                n2, v2, c2 = motor.processar_sped_fiscal(file2)
+                n2, v2, c2 = motor.processar_sped_geral(file2) # USA FUNÇÃO NOVA
                 st.session_state.sped2_vendas = pd.DataFrame(v2) if v2 else pd.DataFrame(columns=cols_padrao)
                 st.session_state.sped2_compras = pd.DataFrame(c2) if c2 else pd.DataFrame(columns=cols_padrao)
                 st.success(f"Lido: {len(v2)} Saídas | {len(c2)} Entradas")
@@ -619,6 +643,7 @@ elif modo_app == "⚔️ Comparador SPED vs SPED":
             if div_v.empty and so_a_v.empty and so_b_v.empty: st.success("✅ As Saídas estão idênticas nos dois arquivos!")
         
         with tab_compras:
+            # (Mesma lógica para compras...)
             div_c, so_a_c, so_b_c, tot_a_c, tot_b_c = comparar_speds_avancado(st.session_state.sped1_compras, st.session_state.sped2_compras)
             if not div_c.empty: st.error("💰 **Divergência de Valores:**"); st.dataframe(div_c[['Num NFe', 'Chave NFe', 'CFOP', 'Valor_A', 'Valor_B', 'Dif_Valor']])
             if not so_a_c.empty: st.warning("⚠️ **Falta no ERP:**"); st.dataframe(so_a_c[['Num NFe', 'Chave NFe', 'CFOP', 'Valor_A']])
