@@ -33,7 +33,6 @@ def init_df(key, columns=None):
         else:
             st.session_state[key] = pd.DataFrame()
 
-# CORREÇÃO 1: Colunas Padrão agora incluem CFOP e os Impostos para evitar KeyError
 cols_padrao = ['Chave NFe', 'Num NFe', 'CFOP', 'Valor', 'vICMS', 'vPIS', 'vCOFINS', 'Produto', 'NCM']
 init_df('xml_vendas_df', cols_padrao)
 init_df('xml_compras_df', cols_padrao)
@@ -154,18 +153,19 @@ def gerar_excel_saneamento(df_v, df_c):
             
     return output.getvalue()
 
-# CORREÇÃO 2: Blindagem da função para garantir que não dê KeyError em dataframes vazios
+# CORREÇÃO: Remoção de zeros à esquerda nos números da nota (Num NFe)
 def comparar_speds_avancado(df_a, df_b, label_a="SPED A", label_b="SPED B"):
     cols_group = ['Chave NFe', 'Num NFe', 'CFOP'] 
     cols_sum = ['Valor', 'vICMS', 'vPIS', 'vCOFINS']
     
-    # BLINDAGEM: Garante que todas as colunas necessárias existam
     for col in cols_group:
         if col not in df_a.columns: df_a[col] = 'N/A'
         if col not in df_b.columns: df_b[col] = 'N/A'
         
-    df_a['Num NFe'] = df_a['Num NFe'].astype(str)
-    df_b['Num NFe'] = df_b['Num NFe'].astype(str)
+    # --- A MÁGICA ACONTECE AQUI: LSTRIP('0') REMOVE OS ZEROS DA ESQUERDA ---
+    df_a['Num NFe'] = df_a['Num NFe'].astype(str).str.lstrip('0').replace('', '0')
+    df_b['Num NFe'] = df_b['Num NFe'].astype(str).str.lstrip('0').replace('', '0')
+    
     df_a['CFOP'] = df_a['CFOP'].astype(str)
     df_b['CFOP'] = df_b['CFOP'].astype(str)
 
@@ -440,7 +440,7 @@ if modo_app == "📊 Auditoria & Reforma":
                 )
 
 # ==============================================================================
-# MODO 2: CONSULTOR (PORTAL CBS + LC 214 NO EXCEL)
+# MODO 2: CONSULTOR (COSMOS NA TELA + LC 214 NO EXCEL)
 # ==============================================================================
 elif modo_app == "🔍 Consultor de Classificação":
     st.markdown("""
@@ -483,10 +483,10 @@ elif modo_app == "🔍 Consultor de Classificação":
                     st.markdown(f"**Regra Aplicada:** {desc_regra}")
                     st.caption(f"Fonte da Regra: {origem_legal}")
                     
-                    link_cbs = "https://piloto-cbs.tributos.gov.br/servico/calculadora-consumo/calculadora/nomenclaturas"
+                    link_cosmos = f"https://cosmos.bluesoft.com.br/ncms/{ncm_limpo}"
                     link_lei = f"https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp214.htm#:~:text={ncm_formatado_pontos}"
                     
-                    st.markdown(f"🛡️ [**Validar no Portal CBS (Piloto)**]({link_cbs})")
+                    st.markdown(f"📦 [**Ver Produto no Cosmos (Tira-Teima)**]({link_cosmos})")
                     st.markdown(f"⚖️ [**Ver na Lei da Reforma (LC 214)**]({link_lei})")
             else: st.warning("Digite um NCM para pesquisar.")
 
@@ -518,28 +518,21 @@ elif modo_app == "🔍 Consultor de Classificação":
                         res = motor.classificar_item(row_sim, mapa_lei, df_regras_json, df_tipi, aliq_ibs/100, aliq_cbs/100)
                         desc_tipi = buscar_descricao_tipi(ncm_val, df_tipi)
                         
-                        link_cbs = "https://piloto-cbs.tributos.gov.br/servico/calculadora-consumo/calculadora/nomenclaturas"
                         link_lei = f"https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp214.htm#:~:text={ncm_formatado_pontos}"
                         formula_excel = f'=HYPERLINK("{link_lei}", "📜 Base Legal")'
+                        link_cosmos = f"https://cosmos.bluesoft.com.br/ncms/{ncm_limpo}"
                         
                         resultados_lote.append({
                             'NCM Original': ncm_val, 'CFOP': cfop_val, 'Descrição TIPI': desc_tipi,
                             'Novo CST': res[3], 'cClassTrib': res[0], 'Regra Aplicada': res[1],
                             'Status Tributário': res[2], 
-                            'Link Conferência (Web)': link_cbs, 
+                            'Link Conferência (Web)': link_cosmos, 
                             'Base Legal (Clique Aqui)': formula_excel 
                         })
                         if idx % 10 == 0: prog_bar.progress((idx + 1) / total)
                     prog_bar.empty()
                     df_resultado = pd.DataFrame(resultados_lote)
-                    
-                    st.dataframe(
-                        df_resultado.drop(columns=['Base Legal (Clique Aqui)']), 
-                        column_config={
-                            "Link Conferência (Web)": st.column_config.LinkColumn("🔍 Validar", display_text="Portal CBS")
-                        }
-                    )
-                    
+                    st.dataframe(df_resultado.drop(columns=['Base Legal (Clique Aqui)']), column_config={"Link Conferência (Web)": st.column_config.LinkColumn("🔍 Tira-Teima", display_text="Ver Produto")})
                     df_export = df_resultado.drop(columns=['Link Conferência (Web)'])
                     excel_data = gerar_excel_final_com_links(df_export)
                     st.download_button(label="📥 Baixar Resultado (Excel Profissional)", data=excel_data, file_name="Resultado_Classificacao.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
@@ -556,11 +549,8 @@ elif modo_app == "🛡️ Validador XML (Reforma)":
         <div class="sub-header">Auditoria de Tags IBS/CBS e Classificação em Arquivos de Teste</div>
     </div>
     """, unsafe_allow_html=True)
-
     st.info("ℹ️ Suba arquivos XML (ou um ZIP) emitidos com o layout de teste da Reforma. O sistema confrontará as tags com o cálculo interno.")
-
     uploaded_xmls = st.file_uploader("Selecione XMLs soltos ou Arquivo ZIP", type=['xml', 'zip'], accept_multiple_files=True)
-
     if uploaded_xmls:
         tem_zip = any(f.name.endswith('.zip') for f in uploaded_xmls)
         if st.session_state.df_validador.empty:
@@ -570,71 +560,45 @@ elif modo_app == "🛡️ Validador XML (Reforma)":
             else:
                 st.session_state.df_validador = pd.DataFrame(processar_arquivos_com_barra(uploaded_xmls, 'SAIDA', is_zip=False))
             st.rerun()
-
     if not st.session_state.df_validador.empty:
         df_auditado = auditar_df(st.session_state.df_validador.copy(), aliq_ibs/100, aliq_cbs/100)
         divergencias = []
         prog_bar = st.progress(0, text="🔍 Confrontando XML vs Regras...")
         total_rows = len(df_auditado)
-        
         for idx, row in df_auditado.iterrows():
-            xml_ibs = row.get('XML_vIBS', 0.0)
-            xml_cbs = row.get('XML_vCBS', 0.0)
-            xml_class = str(row.get('XML_cClass', '')).strip()
+            xml_ibs = row.get('XML_vIBS', 0.0); xml_class = str(row.get('XML_cClass', '')).strip()
+            sys_ibs = row.get('vIBS', 0.0); sys_class = str(row.get('cClassTrib', '')).strip()
             
-            sys_ibs = row.get('vIBS', 0.0)
-            sys_cbs = row.get('vCBS', 0.0)
-            sys_class = str(row.get('cClassTrib', '')).strip()
+            xml_cbs = row.get('XML_vCBS', 0.0) 
+            sys_cbs = row.get('vCBS', 0.0)     
             
             status_class = "✅ OK" if xml_class == sys_class else "❌ Divergente"
             diff_ibs = abs(xml_ibs - sys_ibs)
             status_valor = "✅ OK" if diff_ibs < 0.05 else "❌ Valor Diferente"
-            
             if status_class == "❌ Divergente" or status_valor == "❌ Valor Diferente":
                 divergencias.append({
-                    'Chave NFe': row['Chave NFe'],
-                    'Num NFe': row['Num NFe'],
-                    'Produto': row['Produto'],
-                    'NCM': row['NCM'],
+                    'Chave NFe': row['Chave NFe'], 'Num NFe': row['Num NFe'], 'Produto': row['Produto'], 'NCM': row['NCM'],
                     'Valor Produto': row.get('Valor', 0.0), 
-                    'cClass XML': xml_class,
-                    'cClass Sistema': sys_class,
-                    'vIBS XML': xml_ibs,
-                    'vIBS Sistema': sys_ibs,
-                    'vCBS XML': xml_cbs, 
-                    'vCBS Sistema': sys_cbs, 
-                    'Status Classif.': status_class,
-                    'Status Valor': status_valor
+                    'cClass XML': xml_class, 'cClass Sistema': sys_class, 
+                    'vIBS XML': xml_ibs, 'vIBS Sistema': sys_ibs,
+                    'vCBS XML': xml_cbs, 'vCBS Sistema': sys_cbs, 
+                    'Status Classif.': status_class, 'Status Valor': status_valor
                 })
-            
             if idx % 10 == 0: prog_bar.progress((idx + 1) / total_rows)
-            
         prog_bar.empty()
-        
         st.divider()
         k1, k2, k3 = st.columns(3)
-        k1.metric("Total Notas Analisadas", total_rows)
-        k2.metric("XMLs Corretos", total_rows - len(divergencias))
-        k3.metric("Com Divergência", len(divergencias), delta_color="inverse")
-        
+        k1.metric("Total Notas Analisadas", total_rows); k2.metric("XMLs Corretos", total_rows - len(divergencias)); k3.metric("Com Divergência", len(divergencias), delta_color="inverse")
         if divergencias:
             df_div = pd.DataFrame(divergencias)
             st.error(f"🚨 Encontramos {len(divergencias)} itens com divergência na tag de Reforma!")
             st.dataframe(df_div)
-            
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                 df_div.to_excel(writer, index=False, sheet_name='Divergencias_XML')
                 writer.sheets['Divergencias_XML'].set_column('A:M', 18)
-            
-            st.download_button(
-                "📥 Baixar Relatório de Erros XML",
-                output.getvalue(),
-                "Erros_Validacao_XML.xlsx",
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-        else:
-            st.success("🎉 Parabéns! Todos os XMLs analisados estão em conformidade com as regras do sistema.")
+            st.download_button("📥 Baixar Relatório de Erros XML", output.getvalue(), "Erros_Validacao_XML.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        else: st.success("🎉 Parabéns! Todos os XMLs analisados estão em conformidade com as regras do sistema.")
 
 # ==============================================================================
 # MODO 4: COMPARADOR SPED VS SPED
