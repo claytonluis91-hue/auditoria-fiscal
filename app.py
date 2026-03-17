@@ -6,7 +6,6 @@ import motor
 import importlib
 import relatorio
 import zipfile
-import streamlit as st
 
 # Botão na barra lateral para voltar ao Portal
 with st.sidebar:
@@ -54,6 +53,10 @@ def reset_all():
             st.session_state[key] = pd.DataFrame(columns=cols_padrao)
     st.session_state.empresa_nome = "Nenhuma Empresa"
     st.session_state.uploader_key += 1
+    # Reseta os rastreadores de arquivo para evitar loops
+    st.session_state.last_sped_m1 = None
+    st.session_state.last_sped1 = None
+    st.session_state.last_sped2 = None
 
 # --- CSS ---
 st.markdown("""
@@ -71,7 +74,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- CACHE ---
+# --- CACHE E FUNÇÕES ---
 @st.cache_data
 def carregar_bases(): return motor.carregar_base_legal(), motor.carregar_json_regras()
 @st.cache_data
@@ -235,19 +238,17 @@ with st.sidebar:
     
     uploaded_tipi = None 
     
-    # --- LÓGICA INTELIGENTE DE ALÍQUOTAS ---
     if modo_app != "⚔️ Comparador SPED vs SPED":
         if st.session_state.empresa_nome != "Nenhuma Empresa" and modo_app == "📊 Auditoria & Reforma":
             st.success(f"🏢 {st.session_state.empresa_nome}")
             
         st.markdown("#### ⚙️ Parâmetros Fiscais")
         
-        # --- CORREÇÃO DA INVERSÃO DE ALÍQUOTAS ---
         if modo_app == "🛡️ Validador XML (Reforma)":
-            val_ibs, val_cbs = 0.1, 0.9 # CORRIGIDO: 0.1% IBS e 0.9% CBS
+            val_ibs, val_cbs = 0.1, 0.9 
             st.info("ℹ️ Alíquotas ajustadas para Período de Teste (1.0%)")
         else:
-            val_ibs, val_cbs = 17.7, 8.8 # Alíquotas Futuras (Padrão)
+            val_ibs, val_cbs = 17.7, 8.8 
 
         c1, c2 = st.columns(2)
         with c1: aliq_ibs = st.number_input("IBS (%)", 0.0, 50.0, val_ibs, 0.1)
@@ -311,12 +312,14 @@ if modo_app == "📊 Auditoria & Reforma":
         st.session_state.xml_compras_df = pd.DataFrame(processar_arquivos_com_barra(compras_files, 'ENTRADA', is_zip=tem_zip_c))
         st.rerun()
 
-    if sped_file and st.session_state.sped_vendas_df.empty:
+    # CORREÇÃO LOOP SPED MODO 1: Checa nome do arquivo
+    if sped_file and st.session_state.get('last_sped_m1') != sped_file.name:
         with st.spinner("Processando SPED Universal..."):
             nome, vendas, compras = motor.processar_sped_geral(sped_file)
             st.session_state.empresa_nome = nome
             st.session_state.sped_vendas_df = pd.DataFrame(vendas) if vendas else pd.DataFrame(columns=cols_padrao)
             st.session_state.sped_compras_df = pd.DataFrame(compras) if compras else pd.DataFrame(columns=cols_padrao)
+            st.session_state.last_sped_m1 = sped_file.name
             st.rerun()
 
     df_xml_v = auditar_df(st.session_state.xml_vendas_df.copy(), aliq_ibs/100, aliq_cbs/100)
@@ -449,7 +452,6 @@ elif modo_app == "🔍 Consultor de Classificação":
                     st.markdown(f"**Regra Aplicada:** {desc_regra}")
                     st.caption(f"Fonte da Regra: {origem_legal}")
                     
-                    # --- LINKS ATUALIZADOS ---
                     link_cosmos = f"https://cosmos.bluesoft.com.br/ncms/{ncm_limpo}"
                     link_lei = f"https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp214.htm#:~:text={ncm_formatado_pontos}"
                     
@@ -507,7 +509,7 @@ elif modo_app == "🔍 Consultor de Classificação":
             except Exception as e: st.error(f"Erro ao processar arquivo: {e}")
 
 # ==============================================================================
-# MODO 3: VALIDADOR XML (REFORMA) - COM NOVAS COLUNAS
+# MODO 3: VALIDADOR XML (REFORMA)
 # ==============================================================================
 elif modo_app == "🛡️ Validador XML (Reforma)":
     st.markdown("""
@@ -516,11 +518,8 @@ elif modo_app == "🛡️ Validador XML (Reforma)":
         <div class="sub-header">Auditoria de Tags IBS/CBS e Classificação em Arquivos de Teste</div>
     </div>
     """, unsafe_allow_html=True)
-
     st.info("ℹ️ Suba arquivos XML (ou um ZIP) emitidos com o layout de teste da Reforma. O sistema confrontará as tags com o cálculo interno.")
-
     uploaded_xmls = st.file_uploader("Selecione XMLs soltos ou Arquivo ZIP", type=['xml', 'zip'], accept_multiple_files=True)
-
     if uploaded_xmls:
         tem_zip = any(f.name.endswith('.zip') for f in uploaded_xmls)
         if st.session_state.df_validador.empty:
@@ -530,72 +529,45 @@ elif modo_app == "🛡️ Validador XML (Reforma)":
             else:
                 st.session_state.df_validador = pd.DataFrame(processar_arquivos_com_barra(uploaded_xmls, 'SAIDA', is_zip=False))
             st.rerun()
-
     if not st.session_state.df_validador.empty:
-        # AQUI USAMOS AS ALIQUOTAS TESTE DEFINIDAS NO INÍCIO (0.1 e 0.9)
         df_auditado = auditar_df(st.session_state.df_validador.copy(), aliq_ibs/100, aliq_cbs/100)
         divergencias = []
         prog_bar = st.progress(0, text="🔍 Confrontando XML vs Regras...")
         total_rows = len(df_auditado)
-        
         for idx, row in df_auditado.iterrows():
-            xml_ibs = row.get('XML_vIBS', 0.0)
-            xml_cbs = row.get('XML_vCBS', 0.0)
-            xml_class = str(row.get('XML_cClass', '')).strip()
+            xml_ibs = row.get('XML_vIBS', 0.0); xml_class = str(row.get('XML_cClass', '')).strip()
+            sys_ibs = row.get('vIBS', 0.0); sys_class = str(row.get('cClassTrib', '')).strip()
             
-            sys_ibs = row.get('vIBS', 0.0)
-            sys_cbs = row.get('vCBS', 0.0)
-            sys_class = str(row.get('cClassTrib', '')).strip()
+            xml_cbs = row.get('XML_vCBS', 0.0) # COLUNA CBS
+            sys_cbs = row.get('vCBS', 0.0)     # COLUNA CBS
             
             status_class = "✅ OK" if xml_class == sys_class else "❌ Divergente"
             diff_ibs = abs(xml_ibs - sys_ibs)
             status_valor = "✅ OK" if diff_ibs < 0.05 else "❌ Valor Diferente"
-            
             if status_class == "❌ Divergente" or status_valor == "❌ Valor Diferente":
                 divergencias.append({
-                    'Chave NFe': row['Chave NFe'],
-                    'Num NFe': row['Num NFe'],
-                    'Produto': row['Produto'],
-                    'NCM': row['NCM'],
-                    'Valor Produto': row['Valor'], # COLUNA NOVA
-                    'cClass XML': xml_class,
-                    'cClass Sistema': sys_class,
-                    'vIBS XML': xml_ibs,
-                    'vIBS Sistema': sys_ibs,
-                    'vCBS XML': xml_cbs, # COLUNA NOVA
-                    'vCBS Sistema': sys_cbs, # COLUNA NOVA
-                    'Status Classif.': status_class,
-                    'Status Valor': status_valor
+                    'Chave NFe': row['Chave NFe'], 'Num NFe': row['Num NFe'], 'Produto': row['Produto'], 'NCM': row['NCM'],
+                    'Valor Produto': row.get('Valor', 0.0), # COLUNA VALOR PRODUTO
+                    'cClass XML': xml_class, 'cClass Sistema': sys_class, 
+                    'vIBS XML': xml_ibs, 'vIBS Sistema': sys_ibs,
+                    'vCBS XML': xml_cbs, 'vCBS Sistema': sys_cbs, # COLUNAS CBS
+                    'Status Classif.': status_class, 'Status Valor': status_valor
                 })
-            
             if idx % 10 == 0: prog_bar.progress((idx + 1) / total_rows)
-            
         prog_bar.empty()
-        
         st.divider()
         k1, k2, k3 = st.columns(3)
-        k1.metric("Total Notas Analisadas", total_rows)
-        k2.metric("XMLs Corretos", total_rows - len(divergencias))
-        k3.metric("Com Divergência", len(divergencias), delta_color="inverse")
-        
+        k1.metric("Total Notas Analisadas", total_rows); k2.metric("XMLs Corretos", total_rows - len(divergencias)); k3.metric("Com Divergência", len(divergencias), delta_color="inverse")
         if divergencias:
             df_div = pd.DataFrame(divergencias)
             st.error(f"🚨 Encontramos {len(divergencias)} itens com divergência na tag de Reforma!")
             st.dataframe(df_div)
-            
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                 df_div.to_excel(writer, index=False, sheet_name='Divergencias_XML')
                 writer.sheets['Divergencias_XML'].set_column('A:M', 18)
-            
-            st.download_button(
-                "📥 Baixar Relatório de Erros XML",
-                output.getvalue(),
-                "Erros_Validacao_XML.xlsx",
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-        else:
-            st.success("🎉 Parabéns! Todos os XMLs analisados estão em conformidade com as regras do sistema.")
+            st.download_button("📥 Baixar Relatório de Erros XML", output.getvalue(), "Erros_Validacao_XML.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        else: st.success("🎉 Parabéns! Todos os XMLs analisados estão em conformidade com as regras do sistema.")
 
 # ==============================================================================
 # MODO 4: COMPARADOR SPED VS SPED
@@ -611,28 +583,40 @@ elif modo_app == "⚔️ Comparador SPED vs SPED":
     with col1:
         st.markdown("### 📁 1. SPED Original (Cliente)")
         file1 = st.file_uploader("Selecione o SPED do Cliente", type=['txt'], key="sped1")
-        if file1 and st.session_state.sped1_vendas.empty:
+        
+        # CORREÇÃO LOOP SPED A: Checa nome do arquivo
+        if file1 and st.session_state.get('last_sped1') != file1.name:
             with st.spinner("Processando SPED A..."):
-                n1, v1, c1 = motor.processar_sped_geral(file1) # USA FUNÇÃO NOVA
+                n1, v1, c1 = motor.processar_sped_geral(file1) 
                 st.session_state.sped1_vendas = pd.DataFrame(v1) if v1 else pd.DataFrame(columns=cols_padrao)
                 st.session_state.sped1_compras = pd.DataFrame(c1) if c1 else pd.DataFrame(columns=cols_padrao)
+                st.session_state.last_sped1 = file1.name
                 st.success(f"Lido: {len(v1)} Saídas | {len(c1)} Entradas")
                 st.rerun()
+                
     with col2:
         st.markdown("### 💻 2. SPED Gerado (ERP/Sistema)")
         file2 = st.file_uploader("Selecione o SPED do ERP", type=['txt'], key="sped2")
-        if file2 and st.session_state.sped2_vendas.empty:
+        
+        # CORREÇÃO LOOP SPED B: Checa nome do arquivo
+        if file2 and st.session_state.get('last_sped2') != file2.name:
             with st.spinner("Processando SPED B..."):
-                n2, v2, c2 = motor.processar_sped_geral(file2) # USA FUNÇÃO NOVA
+                n2, v2, c2 = motor.processar_sped_geral(file2) 
                 st.session_state.sped2_vendas = pd.DataFrame(v2) if v2 else pd.DataFrame(columns=cols_padrao)
                 st.session_state.sped2_compras = pd.DataFrame(c2) if c2 else pd.DataFrame(columns=cols_padrao)
+                st.session_state.last_sped2 = file2.name
                 st.success(f"Lido: {len(v2)} Saídas | {len(c2)} Entradas")
                 st.rerun()
     
-    if not st.session_state.sped1_vendas.empty and not st.session_state.sped2_vendas.empty:
+    # CORREÇÃO DA CONDIÇÃO DE EXIBIÇÃO: Mostra se tiver vendas OU compras
+    tem_sped1 = not st.session_state.sped1_vendas.empty or not st.session_state.sped1_compras.empty
+    tem_sped2 = not st.session_state.sped2_vendas.empty or not st.session_state.sped2_compras.empty
+
+    if tem_sped1 and tem_sped2:
         st.divider()
         st.markdown("### 📊 Resultado da Auditoria Cruzada")
         tab_vendas, tab_compras = st.tabs(["📤 Comparar Saídas (Vendas)", "📥 Comparar Entradas (Compras)"])
+        
         with tab_vendas:
             div_v, so_a_v, so_b_v, tot_a, tot_b = comparar_speds_avancado(st.session_state.sped1_vendas, st.session_state.sped2_vendas)
             k1, k2, k3, k4 = st.columns(4)
@@ -643,8 +627,9 @@ elif modo_app == "⚔️ Comparador SPED vs SPED":
             if div_v.empty and so_a_v.empty and so_b_v.empty: st.success("✅ As Saídas estão idênticas nos dois arquivos!")
         
         with tab_compras:
-            # (Mesma lógica para compras...)
             div_c, so_a_c, so_b_c, tot_a_c, tot_b_c = comparar_speds_avancado(st.session_state.sped1_compras, st.session_state.sped2_compras)
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("Total Cliente", tot_a_c); k2.metric("Total ERP", tot_b_c); k3.metric("Divergência Valor", len(div_c), delta_color="inverse"); k4.metric("Divergência CFOP/Omissão", len(so_a_c) + len(so_b_c), delta_color="inverse")
             if not div_c.empty: st.error("💰 **Divergência de Valores:**"); st.dataframe(div_c[['Num NFe', 'Chave NFe', 'CFOP', 'Valor_A', 'Valor_B', 'Dif_Valor']])
             if not so_a_c.empty: st.warning("⚠️ **Falta no ERP:**"); st.dataframe(so_a_c[['Num NFe', 'Chave NFe', 'CFOP', 'Valor_A']])
             if not so_b_c.empty: st.info("ℹ️ **Falta no Cliente:**"); st.dataframe(so_b_c[['Num NFe', 'Chave NFe', 'CFOP', 'Valor_B']])
