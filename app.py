@@ -33,7 +33,8 @@ def init_df(key, columns=None):
         else:
             st.session_state[key] = pd.DataFrame()
 
-cols_padrao = ['Chave NFe', 'Num NFe', 'Valor', 'Produto', 'NCM']
+# CORREÇÃO 1: Colunas Padrão agora incluem CFOP e os Impostos para evitar KeyError
+cols_padrao = ['Chave NFe', 'Num NFe', 'CFOP', 'Valor', 'vICMS', 'vPIS', 'vCOFINS', 'Produto', 'NCM']
 init_df('xml_vendas_df', cols_padrao)
 init_df('xml_compras_df', cols_padrao)
 init_df('sped_vendas_df', cols_padrao)
@@ -53,7 +54,6 @@ def reset_all():
             st.session_state[key] = pd.DataFrame(columns=cols_padrao)
     st.session_state.empresa_nome = "Nenhuma Empresa"
     st.session_state.uploader_key += 1
-    # Reseta os rastreadores de arquivo para evitar loops
     st.session_state.last_sped_m1 = None
     st.session_state.last_sped1 = None
     st.session_state.last_sped2 = None
@@ -74,7 +74,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- CACHE E FUNÇÕES ---
+# --- CACHE ---
 @st.cache_data
 def carregar_bases(): return motor.carregar_base_legal(), motor.carregar_json_regras()
 @st.cache_data
@@ -125,35 +125,59 @@ def gerar_excel_final_com_links(df_para_excel):
         worksheet.set_column('A:Z', 20) 
     return output.getvalue()
 
+def criar_link_lei(ncm):
+    ncm_fmt = formatar_ncm_pontos(ncm)
+    link = f"https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp214.htm#:~:text={ncm_fmt}"
+    return f'=HYPERLINK("{link}", "📜 Base Legal")'
+
 def gerar_excel_saneamento(df_v, df_c):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         cols_base = ['NCM', 'CFOP', 'Produto']
         cols_extra = ['Novo CST', 'cClassTrib', 'DescRegra', 'Status', 'Validação TIPI']
+        
         if not df_v.empty:
             cols_presentes = [c for c in cols_base + cols_extra if c in df_v.columns]
             df_resumo_v = df_v[cols_presentes].groupby(cols_base, as_index=False).first()
+            df_resumo_v['Base Legal (Clique Aqui)'] = df_resumo_v['NCM'].apply(criar_link_lei)
             df_resumo_v.to_excel(writer, sheet_name='Resumo_Saidas', index=False)
             writer.sheets['Resumo_Saidas'].set_column('A:Z', 18)
+            writer.sheets['Resumo_Saidas'].set_column('C:C', 40)
+
         if not df_c.empty:
             cols_presentes = [c for c in cols_base + cols_extra if c in df_c.columns]
             df_resumo_c = df_c[cols_presentes].groupby(cols_base, as_index=False).first()
+            df_resumo_c['Base Legal (Clique Aqui)'] = df_resumo_c['NCM'].apply(criar_link_lei)
             df_resumo_c.to_excel(writer, sheet_name='Resumo_Entradas', index=False)
             writer.sheets['Resumo_Entradas'].set_column('A:Z', 18)
+            writer.sheets['Resumo_Entradas'].set_column('C:C', 40)
+            
     return output.getvalue()
 
+# CORREÇÃO 2: Blindagem da função para garantir que não dê KeyError em dataframes vazios
 def comparar_speds_avancado(df_a, df_b, label_a="SPED A", label_b="SPED B"):
     cols_group = ['Chave NFe', 'Num NFe', 'CFOP'] 
     cols_sum = ['Valor', 'vICMS', 'vPIS', 'vCOFINS']
-    if 'Num NFe' not in df_a.columns: df_a['Num NFe'] = 'N/A'
-    if 'Num NFe' not in df_b.columns: df_b['Num NFe'] = 'N/A'
+    
+    # BLINDAGEM: Garante que todas as colunas necessárias existam
+    for col in cols_group:
+        if col not in df_a.columns: df_a[col] = 'N/A'
+        if col not in df_b.columns: df_b[col] = 'N/A'
+        
     df_a['Num NFe'] = df_a['Num NFe'].astype(str)
     df_b['Num NFe'] = df_b['Num NFe'].astype(str)
+    df_a['CFOP'] = df_a['CFOP'].astype(str)
+    df_b['CFOP'] = df_b['CFOP'].astype(str)
+
     for col in cols_sum:
-        if col in df_a.columns: df_a[col] = pd.to_numeric(df_a[col], errors='coerce').fillna(0)
-        if col in df_b.columns: df_b[col] = pd.to_numeric(df_b[col], errors='coerce').fillna(0)
+        if col not in df_a.columns: df_a[col] = 0.0
+        if col not in df_b.columns: df_b[col] = 0.0
+        df_a[col] = pd.to_numeric(df_a[col], errors='coerce').fillna(0)
+        df_b[col] = pd.to_numeric(df_b[col], errors='coerce').fillna(0)
+
     g_a = df_a.groupby(cols_group)[cols_sum].sum().reset_index()
     g_b = df_b.groupby(cols_group)[cols_sum].sum().reset_index()
+    
     merged = pd.merge(g_a, g_b, on=['Chave NFe', 'Num NFe', 'CFOP'], how='outer', suffixes=('_A', '_B'), indicator=True)
     merged['Dif_Valor'] = merged['Valor_A'].fillna(0) - merged['Valor_B'].fillna(0)
     merged['Dif_ICMS'] = merged['vICMS_A'].fillna(0) - merged['vICMS_B'].fillna(0)
@@ -177,20 +201,27 @@ ns = {'ns': 'http://www.portalfiscal.inf.br/nfe'}
 
 def processar_arquivos_com_barra(arquivos, tipo, is_zip=False):
     lista = []
+    
     if is_zip:
-        total = 1
-        barra = st.progress(0, text="⏳ Extraindo e processando ZIP...")
+        barra = st.progress(0, text="⏳ Descompactando e analisando ZIP...")
         for arquivo in arquivos:
             try:
-                lista.extend(motor.processar_zip_xml(arquivo, ns))
+                itens = motor.processar_zip_xml(arquivo, ns)
+                lista.extend(itens)
             except: pass
-        barra.empty()
+        barra.empty() 
+        st.toast(f"✅ ZIP Processado! {len(lista)} itens encontrados.", icon="🚀")
+        
     else:
         total = len(arquivos)
         barra = st.progress(0, text="⏳ Iniciando leitura...")
+        step = max(1, int(total / 10)) 
+        
         for i, arquivo in enumerate(arquivos):
-            porcentagem = (i + 1) / total
-            barra.progress(porcentagem, text=f"⏳ Processando: {int(porcentagem * 100)}% concluído...")
+            if i % step == 0:
+                perc = int((i / total) * 100)
+                barra.progress(i / total, text=f"⏳ Processando: {perc}% concluído...")
+            
             try:
                 tree = ET.parse(arquivo)
                 if tipo == 'SAIDA' and st.session_state.empresa_nome == "Nenhuma Empresa":
@@ -198,6 +229,7 @@ def processar_arquivos_com_barra(arquivos, tipo, is_zip=False):
                 lista.extend(motor.processar_xml_detalhado(tree, ns, tipo))
             except: continue
         barra.empty()
+        
     return lista
 
 def auditar_df(df, a_ibs, a_cbs):
@@ -312,7 +344,6 @@ if modo_app == "📊 Auditoria & Reforma":
         st.session_state.xml_compras_df = pd.DataFrame(processar_arquivos_com_barra(compras_files, 'ENTRADA', is_zip=tem_zip_c))
         st.rerun()
 
-    # CORREÇÃO LOOP SPED MODO 1: Checa nome do arquivo
     if sped_file and st.session_state.get('last_sped_m1') != sped_file.name:
         with st.spinner("Processando SPED Universal..."):
             nome, vendas, compras = motor.processar_sped_geral(sped_file)
@@ -409,7 +440,7 @@ if modo_app == "📊 Auditoria & Reforma":
                 )
 
 # ==============================================================================
-# MODO 2: CONSULTOR (COSMOS NA TELA + LC 214 NO EXCEL)
+# MODO 2: CONSULTOR (PORTAL CBS + LC 214 NO EXCEL)
 # ==============================================================================
 elif modo_app == "🔍 Consultor de Classificação":
     st.markdown("""
@@ -452,10 +483,10 @@ elif modo_app == "🔍 Consultor de Classificação":
                     st.markdown(f"**Regra Aplicada:** {desc_regra}")
                     st.caption(f"Fonte da Regra: {origem_legal}")
                     
-                    link_cosmos = f"https://cosmos.bluesoft.com.br/ncms/{ncm_limpo}"
+                    link_cbs = "https://piloto-cbs.tributos.gov.br/servico/calculadora-consumo/calculadora/nomenclaturas"
                     link_lei = f"https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp214.htm#:~:text={ncm_formatado_pontos}"
                     
-                    st.markdown(f"📦 [**Ver Produto no Cosmos (Tira-Teima)**]({link_cosmos})")
+                    st.markdown(f"🛡️ [**Validar no Portal CBS (Piloto)**]({link_cbs})")
                     st.markdown(f"⚖️ [**Ver na Lei da Reforma (LC 214)**]({link_lei})")
             else: st.warning("Digite um NCM para pesquisar.")
 
@@ -487,21 +518,28 @@ elif modo_app == "🔍 Consultor de Classificação":
                         res = motor.classificar_item(row_sim, mapa_lei, df_regras_json, df_tipi, aliq_ibs/100, aliq_cbs/100)
                         desc_tipi = buscar_descricao_tipi(ncm_val, df_tipi)
                         
+                        link_cbs = "https://piloto-cbs.tributos.gov.br/servico/calculadora-consumo/calculadora/nomenclaturas"
                         link_lei = f"https://www.planalto.gov.br/ccivil_03/leis/lcp/lcp214.htm#:~:text={ncm_formatado_pontos}"
                         formula_excel = f'=HYPERLINK("{link_lei}", "📜 Base Legal")'
-                        link_cosmos = f"https://cosmos.bluesoft.com.br/ncms/{ncm_limpo}"
                         
                         resultados_lote.append({
                             'NCM Original': ncm_val, 'CFOP': cfop_val, 'Descrição TIPI': desc_tipi,
                             'Novo CST': res[3], 'cClassTrib': res[0], 'Regra Aplicada': res[1],
                             'Status Tributário': res[2], 
-                            'Link Conferência (Web)': link_cosmos, 
+                            'Link Conferência (Web)': link_cbs, 
                             'Base Legal (Clique Aqui)': formula_excel 
                         })
                         if idx % 10 == 0: prog_bar.progress((idx + 1) / total)
                     prog_bar.empty()
                     df_resultado = pd.DataFrame(resultados_lote)
-                    st.dataframe(df_resultado.drop(columns=['Base Legal (Clique Aqui)']), column_config={"Link Conferência (Web)": st.column_config.LinkColumn("🔍 Tira-Teima", display_text="Ver Produto")})
+                    
+                    st.dataframe(
+                        df_resultado.drop(columns=['Base Legal (Clique Aqui)']), 
+                        column_config={
+                            "Link Conferência (Web)": st.column_config.LinkColumn("🔍 Validar", display_text="Portal CBS")
+                        }
+                    )
+                    
                     df_export = df_resultado.drop(columns=['Link Conferência (Web)'])
                     excel_data = gerar_excel_final_com_links(df_export)
                     st.download_button(label="📥 Baixar Resultado (Excel Profissional)", data=excel_data, file_name="Resultado_Classificacao.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
@@ -518,8 +556,11 @@ elif modo_app == "🛡️ Validador XML (Reforma)":
         <div class="sub-header">Auditoria de Tags IBS/CBS e Classificação em Arquivos de Teste</div>
     </div>
     """, unsafe_allow_html=True)
+
     st.info("ℹ️ Suba arquivos XML (ou um ZIP) emitidos com o layout de teste da Reforma. O sistema confrontará as tags com o cálculo interno.")
+
     uploaded_xmls = st.file_uploader("Selecione XMLs soltos ou Arquivo ZIP", type=['xml', 'zip'], accept_multiple_files=True)
+
     if uploaded_xmls:
         tem_zip = any(f.name.endswith('.zip') for f in uploaded_xmls)
         if st.session_state.df_validador.empty:
@@ -529,45 +570,71 @@ elif modo_app == "🛡️ Validador XML (Reforma)":
             else:
                 st.session_state.df_validador = pd.DataFrame(processar_arquivos_com_barra(uploaded_xmls, 'SAIDA', is_zip=False))
             st.rerun()
+
     if not st.session_state.df_validador.empty:
         df_auditado = auditar_df(st.session_state.df_validador.copy(), aliq_ibs/100, aliq_cbs/100)
         divergencias = []
         prog_bar = st.progress(0, text="🔍 Confrontando XML vs Regras...")
         total_rows = len(df_auditado)
+        
         for idx, row in df_auditado.iterrows():
-            xml_ibs = row.get('XML_vIBS', 0.0); xml_class = str(row.get('XML_cClass', '')).strip()
-            sys_ibs = row.get('vIBS', 0.0); sys_class = str(row.get('cClassTrib', '')).strip()
+            xml_ibs = row.get('XML_vIBS', 0.0)
+            xml_cbs = row.get('XML_vCBS', 0.0)
+            xml_class = str(row.get('XML_cClass', '')).strip()
             
-            xml_cbs = row.get('XML_vCBS', 0.0) # COLUNA CBS
-            sys_cbs = row.get('vCBS', 0.0)     # COLUNA CBS
+            sys_ibs = row.get('vIBS', 0.0)
+            sys_cbs = row.get('vCBS', 0.0)
+            sys_class = str(row.get('cClassTrib', '')).strip()
             
             status_class = "✅ OK" if xml_class == sys_class else "❌ Divergente"
             diff_ibs = abs(xml_ibs - sys_ibs)
             status_valor = "✅ OK" if diff_ibs < 0.05 else "❌ Valor Diferente"
+            
             if status_class == "❌ Divergente" or status_valor == "❌ Valor Diferente":
                 divergencias.append({
-                    'Chave NFe': row['Chave NFe'], 'Num NFe': row['Num NFe'], 'Produto': row['Produto'], 'NCM': row['NCM'],
-                    'Valor Produto': row.get('Valor', 0.0), # COLUNA VALOR PRODUTO
-                    'cClass XML': xml_class, 'cClass Sistema': sys_class, 
-                    'vIBS XML': xml_ibs, 'vIBS Sistema': sys_ibs,
-                    'vCBS XML': xml_cbs, 'vCBS Sistema': sys_cbs, # COLUNAS CBS
-                    'Status Classif.': status_class, 'Status Valor': status_valor
+                    'Chave NFe': row['Chave NFe'],
+                    'Num NFe': row['Num NFe'],
+                    'Produto': row['Produto'],
+                    'NCM': row['NCM'],
+                    'Valor Produto': row.get('Valor', 0.0), 
+                    'cClass XML': xml_class,
+                    'cClass Sistema': sys_class,
+                    'vIBS XML': xml_ibs,
+                    'vIBS Sistema': sys_ibs,
+                    'vCBS XML': xml_cbs, 
+                    'vCBS Sistema': sys_cbs, 
+                    'Status Classif.': status_class,
+                    'Status Valor': status_valor
                 })
+            
             if idx % 10 == 0: prog_bar.progress((idx + 1) / total_rows)
+            
         prog_bar.empty()
+        
         st.divider()
         k1, k2, k3 = st.columns(3)
-        k1.metric("Total Notas Analisadas", total_rows); k2.metric("XMLs Corretos", total_rows - len(divergencias)); k3.metric("Com Divergência", len(divergencias), delta_color="inverse")
+        k1.metric("Total Notas Analisadas", total_rows)
+        k2.metric("XMLs Corretos", total_rows - len(divergencias))
+        k3.metric("Com Divergência", len(divergencias), delta_color="inverse")
+        
         if divergencias:
             df_div = pd.DataFrame(divergencias)
             st.error(f"🚨 Encontramos {len(divergencias)} itens com divergência na tag de Reforma!")
             st.dataframe(df_div)
+            
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                 df_div.to_excel(writer, index=False, sheet_name='Divergencias_XML')
                 writer.sheets['Divergencias_XML'].set_column('A:M', 18)
-            st.download_button("📥 Baixar Relatório de Erros XML", output.getvalue(), "Erros_Validacao_XML.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-        else: st.success("🎉 Parabéns! Todos os XMLs analisados estão em conformidade com as regras do sistema.")
+            
+            st.download_button(
+                "📥 Baixar Relatório de Erros XML",
+                output.getvalue(),
+                "Erros_Validacao_XML.xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        else:
+            st.success("🎉 Parabéns! Todos os XMLs analisados estão em conformidade com as regras do sistema.")
 
 # ==============================================================================
 # MODO 4: COMPARADOR SPED VS SPED
@@ -584,7 +651,6 @@ elif modo_app == "⚔️ Comparador SPED vs SPED":
         st.markdown("### 📁 1. SPED Original (Cliente)")
         file1 = st.file_uploader("Selecione o SPED do Cliente", type=['txt'], key="sped1")
         
-        # CORREÇÃO LOOP SPED A: Checa nome do arquivo
         if file1 and st.session_state.get('last_sped1') != file1.name:
             with st.spinner("Processando SPED A..."):
                 n1, v1, c1 = motor.processar_sped_geral(file1) 
@@ -598,7 +664,6 @@ elif modo_app == "⚔️ Comparador SPED vs SPED":
         st.markdown("### 💻 2. SPED Gerado (ERP/Sistema)")
         file2 = st.file_uploader("Selecione o SPED do ERP", type=['txt'], key="sped2")
         
-        # CORREÇÃO LOOP SPED B: Checa nome do arquivo
         if file2 and st.session_state.get('last_sped2') != file2.name:
             with st.spinner("Processando SPED B..."):
                 n2, v2, c2 = motor.processar_sped_geral(file2) 
@@ -608,7 +673,6 @@ elif modo_app == "⚔️ Comparador SPED vs SPED":
                 st.success(f"Lido: {len(v2)} Saídas | {len(c2)} Entradas")
                 st.rerun()
     
-    # CORREÇÃO DA CONDIÇÃO DE EXIBIÇÃO: Mostra se tiver vendas OU compras
     tem_sped1 = not st.session_state.sped1_vendas.empty or not st.session_state.sped1_compras.empty
     tem_sped2 = not st.session_state.sped2_vendas.empty or not st.session_state.sped2_compras.empty
 
