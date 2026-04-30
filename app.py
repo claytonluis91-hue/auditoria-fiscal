@@ -508,6 +508,7 @@ elif modo_app == "🛡️ Validador XML (Reforma)":
     if not st.session_state.df_validador.empty:
         df_auditado = auditar_df(st.session_state.df_validador.copy(), aliq_ibs/100, aliq_cbs/100)
         divergencias = []
+        corretos = []
         prog_bar = st.progress(0, text="🔍 Confrontando XML vs Regras...")
         total_rows = len(df_auditado)
         for idx, row in df_auditado.iterrows():
@@ -520,29 +521,49 @@ elif modo_app == "🛡️ Validador XML (Reforma)":
             status_class = "✅ OK" if xml_class == sys_class else "❌ Divergente"
             diff_ibs = abs(xml_ibs - sys_ibs)
             status_valor = "✅ OK" if diff_ibs < 0.05 else "❌ Valor Diferente"
+            
+            item = {
+                'Chave NFe': row['Chave NFe'], 'Num NFe': row['Num NFe'], 'Produto': row['Produto'], 'NCM': row['NCM'],
+                'Valor Produto': row.get('Valor', 0.0), 
+                'cClass XML': xml_class, 'cClass Sistema': sys_class, 
+                'vIBS XML': xml_ibs, 'vIBS Sistema': sys_ibs,
+                'vCBS XML': xml_cbs, 'vCBS Sistema': sys_cbs, 
+                'Status Classif.': status_class, 'Status Valor': status_valor
+            }
+            
             if status_class == "❌ Divergente" or status_valor == "❌ Valor Diferente":
-                divergencias.append({
-                    'Chave NFe': row['Chave NFe'], 'Num NFe': row['Num NFe'], 'Produto': row['Produto'], 'NCM': row['NCM'],
-                    'Valor Produto': row.get('Valor', 0.0), 
-                    'cClass XML': xml_class, 'cClass Sistema': sys_class, 
-                    'vIBS XML': xml_ibs, 'vIBS Sistema': sys_ibs,
-                    'vCBS XML': xml_cbs, 'vCBS Sistema': sys_cbs, 
-                    'Status Classif.': status_class, 'Status Valor': status_valor
-                })
+                sugestoes = []
+                if status_class == "❌ Divergente": sugestoes.append(f"Alterar cClass de '{xml_class}' para '{sys_class}'")
+                if status_valor == "❌ Valor Diferente": sugestoes.append(f"Ajustar IBS p/ {sys_ibs:.2f} e CBS p/ {sys_cbs:.2f}")
+                item['Recomendação / Esperado'] = " | ".join(sugestoes)
+                divergencias.append(item)
+            else:
+                item['Recomendação / Esperado'] = "Nenhuma ação necessária"
+                corretos.append(item)
+                
             if idx % 10 == 0: prog_bar.progress((idx + 1) / total_rows)
         prog_bar.empty()
         st.divider()
         k1, k2, k3 = st.columns(3)
-        k1.metric("Total Notas Analisadas", total_rows); k2.metric("XMLs Corretos", total_rows - len(divergencias)); k3.metric("Com Divergência", len(divergencias), delta_color="inverse")
-        if divergencias:
-            df_div = pd.DataFrame(divergencias)
+        k1.metric("Total Notas Analisadas", total_rows); k2.metric("XMLs Corretos", len(corretos)); k3.metric("Com Divergência", len(divergencias), delta_color="inverse")
+        
+        df_div = pd.DataFrame(divergencias) if divergencias else pd.DataFrame()
+        df_corr = pd.DataFrame(corretos) if corretos else pd.DataFrame()
+        
+        if not df_div.empty:
             st.error(f"🚨 Encontramos {len(divergencias)} itens com divergência na tag de Reforma!")
             st.dataframe(df_div)
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                df_div.to_excel(writer, index=False, sheet_name='Divergencias_XML')
-                writer.sheets['Divergencias_XML'].set_column('A:M', 18)
-            st.download_button("📥 Baixar Relatório de Erros XML", output.getvalue(), "Erros_Validacao_XML.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-        else: st.success("🎉 Parabéns! Todos os XMLs analisados estão em conformidade com as regras do sistema.")
+        else: 
+            st.success("🎉 Parabéns! Todos os XMLs analisados estão em conformidade com as regras do sistema.")
+            
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            if not df_div.empty:
+                df_div.to_excel(writer, index=False, sheet_name='Divergentes')
+                writer.sheets['Divergentes'].set_column('A:N', 18)
+            if not df_corr.empty:
+                df_corr.to_excel(writer, index=False, sheet_name='Corretos')
+                writer.sheets['Corretos'].set_column('A:N', 18)
+        st.download_button("📥 Baixar Relatório de Validação XML", output.getvalue(), "Relatorio_Validacao_XML.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
