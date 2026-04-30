@@ -38,10 +38,6 @@ init_df('xml_vendas_df', cols_padrao)
 init_df('xml_compras_df', cols_padrao)
 init_df('sped_vendas_df', cols_padrao)
 init_df('sped_compras_df', cols_padrao)
-init_df('sped1_vendas', cols_padrao)
-init_df('sped1_compras', cols_padrao)
-init_df('sped2_vendas', cols_padrao)
-init_df('sped2_compras', cols_padrao)
 init_df('df_validador', cols_padrao)
 
 if 'empresa_nome' not in st.session_state: st.session_state.empresa_nome = "Nenhuma Empresa"
@@ -54,8 +50,6 @@ def reset_all():
     st.session_state.empresa_nome = "Nenhuma Empresa"
     st.session_state.uploader_key += 1
     st.session_state.last_sped_m1 = None
-    st.session_state.last_sped1 = None
-    st.session_state.last_sped2 = None
 
 # --- CSS ---
 st.markdown("""
@@ -153,50 +147,6 @@ def gerar_excel_saneamento(df_v, df_c):
             
     return output.getvalue()
 
-# CORREÇÃO: Remoção de zeros à esquerda nos números da nota (Num NFe)
-def comparar_speds_avancado(df_a, df_b, label_a="SPED A", label_b="SPED B"):
-    cols_group = ['Chave NFe', 'Num NFe', 'CFOP'] 
-    cols_sum = ['Valor', 'vICMS', 'vPIS', 'vCOFINS']
-    
-    for col in cols_group:
-        if col not in df_a.columns: df_a[col] = 'N/A'
-        if col not in df_b.columns: df_b[col] = 'N/A'
-        
-    # --- A MÁGICA ACONTECE AQUI: LSTRIP('0') REMOVE OS ZEROS DA ESQUERDA ---
-    df_a['Num NFe'] = df_a['Num NFe'].astype(str).str.lstrip('0').replace('', '0')
-    df_b['Num NFe'] = df_b['Num NFe'].astype(str).str.lstrip('0').replace('', '0')
-    
-    df_a['CFOP'] = df_a['CFOP'].astype(str)
-    df_b['CFOP'] = df_b['CFOP'].astype(str)
-
-    for col in cols_sum:
-        if col not in df_a.columns: df_a[col] = 0.0
-        if col not in df_b.columns: df_b[col] = 0.0
-        df_a[col] = pd.to_numeric(df_a[col], errors='coerce').fillna(0)
-        df_b[col] = pd.to_numeric(df_b[col], errors='coerce').fillna(0)
-
-    g_a = df_a.groupby(cols_group)[cols_sum].sum().reset_index()
-    g_b = df_b.groupby(cols_group)[cols_sum].sum().reset_index()
-    
-    merged = pd.merge(g_a, g_b, on=['Chave NFe', 'Num NFe', 'CFOP'], how='outer', suffixes=('_A', '_B'), indicator=True)
-    merged['Dif_Valor'] = merged['Valor_A'].fillna(0) - merged['Valor_B'].fillna(0)
-    merged['Dif_ICMS'] = merged['vICMS_A'].fillna(0) - merged['vICMS_B'].fillna(0)
-    div_valor = merged[(merged['_merge'] == 'both') & (abs(merged['Dif_Valor']) > 0.05)].copy()
-    so_a = merged[merged['_merge'] == 'left_only'].copy()
-    so_b = merged[merged['_merge'] == 'right_only'].copy()
-    return div_valor, so_a, so_b, len(g_a), len(g_b)
-
-def gerar_excel_divergencias(div_v, so_a_v, so_b_v, div_c, so_a_c, so_b_c):
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        if not div_v.empty: div_v.to_excel(writer, sheet_name='Div_Valor_Vendas', index=False)
-        if not so_a_v.empty: so_a_v.to_excel(writer, sheet_name='Falta_no_ERP_Vendas', index=False)
-        if not so_b_v.empty: so_b_v.to_excel(writer, sheet_name='Falta_no_Cliente_Vendas', index=False)
-        if not div_c.empty: div_c.to_excel(writer, sheet_name='Div_Valor_Compras', index=False)
-        if not so_a_c.empty: so_a_c.to_excel(writer, sheet_name='Falta_no_ERP_Compras', index=False)
-        if not so_b_c.empty: so_b_c.to_excel(writer, sheet_name='Falta_no_Cliente_Compras', index=False)
-    return output.getvalue()
-
 ns = {'ns': 'http://www.portalfiscal.inf.br/nfe'}
 
 def processar_arquivos_com_barra(arquivos, tipo, is_zip=False):
@@ -261,8 +211,7 @@ with st.sidebar:
         [
             "📊 Auditoria & Reforma",       # 1. Auditor
             "🔍 Consultor de Classificação", # 2. Consultor
-            "🛡️ Validador XML (Reforma)",    # 3. Validador
-            "⚔️ Comparador SPED vs SPED"     # 4. Comparador
+            "🛡️ Validador XML (Reforma)"     # 3. Validador
         ], 
         label_visibility="collapsed"
     )
@@ -270,31 +219,27 @@ with st.sidebar:
     
     uploaded_tipi = None 
     
-    if modo_app != "⚔️ Comparador SPED vs SPED":
-        if st.session_state.empresa_nome != "Nenhuma Empresa" and modo_app == "📊 Auditoria & Reforma":
-            st.success(f"🏢 {st.session_state.empresa_nome}")
-            
-        st.markdown("#### ⚙️ Parâmetros Fiscais")
+    if st.session_state.empresa_nome != "Nenhuma Empresa" and modo_app == "📊 Auditoria & Reforma":
+        st.success(f"🏢 {st.session_state.empresa_nome}")
         
-        if modo_app == "🛡️ Validador XML (Reforma)":
-            val_ibs, val_cbs = 0.1, 0.9 
-            st.info("ℹ️ Alíquotas ajustadas para Período de Teste (1.0%)")
-        else:
-            val_ibs, val_cbs = 17.7, 8.8 
+    st.markdown("#### ⚙️ Parâmetros Fiscais")
+    
+    if modo_app == "🛡️ Validador XML (Reforma)":
+        val_ibs, val_cbs = 0.1, 0.9 
+        st.info("ℹ️ Alíquotas ajustadas para Período de Teste (1.0%)")
+    else:
+        val_ibs, val_cbs = 17.7, 8.8 
 
-        c1, c2 = st.columns(2)
-        with c1: aliq_ibs = st.number_input("IBS (%)", 0.0, 50.0, val_ibs, 0.1)
-        with c2: aliq_cbs = st.number_input("CBS (%)", 0.0, 50.0, val_cbs, 0.1)
-        
-        with st.expander("📂 Atualizar TIPI"):
-            uploaded_tipi = st.file_uploader("TIPI", type=['xlsx', 'csv'])
-            if st.button("🔄 Recarregar"):
-                carregar_bases.clear()
-                carregar_tipi_cache.clear()
-                st.rerun()
-                
-    elif modo_app == "⚔️ Comparador SPED vs SPED":
-        st.info("ℹ️ Ferramenta de comparação de arquivos.")
+    c1, c2 = st.columns(2)
+    with c1: aliq_ibs = st.number_input("IBS (%)", 0.0, 50.0, val_ibs, 0.1)
+    with c2: aliq_cbs = st.number_input("CBS (%)", 0.0, 50.0, val_cbs, 0.1)
+    
+    with st.expander("📂 Atualizar TIPI"):
+        uploaded_tipi = st.file_uploader("TIPI", type=['xlsx', 'csv'])
+        if st.button("🔄 Recarregar"):
+            carregar_bases.clear()
+            carregar_tipi_cache.clear()
+            st.rerun()
 
     st.markdown("<br>", unsafe_allow_html=True)
     if st.button("🗑️ LIMPAR TUDO", type="secondary"):
@@ -600,69 +545,4 @@ elif modo_app == "🛡️ Validador XML (Reforma)":
             st.download_button("📥 Baixar Relatório de Erros XML", output.getvalue(), "Erros_Validacao_XML.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         else: st.success("🎉 Parabéns! Todos os XMLs analisados estão em conformidade com as regras do sistema.")
 
-# ==============================================================================
-# MODO 4: COMPARADOR SPED VS SPED
-# ==============================================================================
-elif modo_app == "⚔️ Comparador SPED vs SPED":
-    st.markdown("""
-    <div class="header-container">
-        <div class="main-header">Comparador de Arquivos SPED</div>
-        <div class="sub-header">Validação Cruzada por CFOP e Valor (Entradas e Saídas)</div>
-    </div>
-    """, unsafe_allow_html=True)
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("### 📁 1. SPED Original (Cliente)")
-        file1 = st.file_uploader("Selecione o SPED do Cliente", type=['txt'], key="sped1")
-        
-        if file1 and st.session_state.get('last_sped1') != file1.name:
-            with st.spinner("Processando SPED A..."):
-                n1, v1, c1 = motor.processar_sped_geral(file1) 
-                st.session_state.sped1_vendas = pd.DataFrame(v1) if v1 else pd.DataFrame(columns=cols_padrao)
-                st.session_state.sped1_compras = pd.DataFrame(c1) if c1 else pd.DataFrame(columns=cols_padrao)
-                st.session_state.last_sped1 = file1.name
-                st.success(f"Lido: {len(v1)} Saídas | {len(c1)} Entradas")
-                st.rerun()
-                
-    with col2:
-        st.markdown("### 💻 2. SPED Gerado (ERP/Sistema)")
-        file2 = st.file_uploader("Selecione o SPED do ERP", type=['txt'], key="sped2")
-        
-        if file2 and st.session_state.get('last_sped2') != file2.name:
-            with st.spinner("Processando SPED B..."):
-                n2, v2, c2 = motor.processar_sped_geral(file2) 
-                st.session_state.sped2_vendas = pd.DataFrame(v2) if v2 else pd.DataFrame(columns=cols_padrao)
-                st.session_state.sped2_compras = pd.DataFrame(c2) if c2 else pd.DataFrame(columns=cols_padrao)
-                st.session_state.last_sped2 = file2.name
-                st.success(f"Lido: {len(v2)} Saídas | {len(c2)} Entradas")
-                st.rerun()
-    
-    tem_sped1 = not st.session_state.sped1_vendas.empty or not st.session_state.sped1_compras.empty
-    tem_sped2 = not st.session_state.sped2_vendas.empty or not st.session_state.sped2_compras.empty
 
-    if tem_sped1 and tem_sped2:
-        st.divider()
-        st.markdown("### 📊 Resultado da Auditoria Cruzada")
-        tab_vendas, tab_compras = st.tabs(["📤 Comparar Saídas (Vendas)", "📥 Comparar Entradas (Compras)"])
-        
-        with tab_vendas:
-            div_v, so_a_v, so_b_v, tot_a, tot_b = comparar_speds_avancado(st.session_state.sped1_vendas, st.session_state.sped2_vendas)
-            k1, k2, k3, k4 = st.columns(4)
-            k1.metric("Total Cliente", tot_a); k2.metric("Total ERP", tot_b); k3.metric("Divergência Valor", len(div_v), delta_color="inverse"); k4.metric("Divergência CFOP/Omissão", len(so_a_v) + len(so_b_v), delta_color="inverse")
-            if not div_v.empty: st.error("💰 **Divergência de Valores:**"); st.dataframe(div_v[['Num NFe', 'Chave NFe', 'CFOP', 'Valor_A', 'Valor_B', 'Dif_Valor', 'Dif_ICMS']])
-            if not so_a_v.empty: st.warning("⚠️ **Falta no ERP:**"); st.dataframe(so_a_v[['Num NFe', 'Chave NFe', 'CFOP', 'Valor_A']])
-            if not so_b_v.empty: st.info("ℹ️ **Falta no Cliente:**"); st.dataframe(so_b_v[['Num NFe', 'Chave NFe', 'CFOP', 'Valor_B']])
-            if div_v.empty and so_a_v.empty and so_b_v.empty: st.success("✅ As Saídas estão idênticas nos dois arquivos!")
-        
-        with tab_compras:
-            div_c, so_a_c, so_b_c, tot_a_c, tot_b_c = comparar_speds_avancado(st.session_state.sped1_compras, st.session_state.sped2_compras)
-            k1, k2, k3, k4 = st.columns(4)
-            k1.metric("Total Cliente", tot_a_c); k2.metric("Total ERP", tot_b_c); k3.metric("Divergência Valor", len(div_c), delta_color="inverse"); k4.metric("Divergência CFOP/Omissão", len(so_a_c) + len(so_b_c), delta_color="inverse")
-            if not div_c.empty: st.error("💰 **Divergência de Valores:**"); st.dataframe(div_c[['Num NFe', 'Chave NFe', 'CFOP', 'Valor_A', 'Valor_B', 'Dif_Valor']])
-            if not so_a_c.empty: st.warning("⚠️ **Falta no ERP:**"); st.dataframe(so_a_c[['Num NFe', 'Chave NFe', 'CFOP', 'Valor_A']])
-            if not so_b_c.empty: st.info("ℹ️ **Falta no Cliente:**"); st.dataframe(so_b_c[['Num NFe', 'Chave NFe', 'CFOP', 'Valor_B']])
-            if div_c.empty and so_a_c.empty and so_b_c.empty: st.success("✅ As Entradas estão idênticas nos dois arquivos!")
-
-        st.markdown("---")
-        excel_divergencias = gerar_excel_divergencias(div_v, so_a_v, so_b_v, div_c, so_a_c, so_b_c)
-        st.download_button(label="📥 Baixar Relatório de Divergências (Excel Detalhado)", data=excel_divergencias, file_name="Divergencias_SPED_vs_SPED.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
